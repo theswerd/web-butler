@@ -1,0 +1,28 @@
+{
+  "name": "@web-butler/ui",
+  "description": "Shared Web Butler components, tokens, and stylesheet",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./shell": "./src/lib/shell.ts",
+    "./fixtures": "./src/fixtures/answers.ts",
+    "./style.css": "./src/style.css"
+  },
+  "scripts": {
+    "compile": "tsc --noEmit"
+  },
+  "dependencies": {
+    "motion": "^12.23.12",
+    "react-icons": "^5.7.0"
+  },
+  "peerDependencies": {
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "typescript": "^5.9.3"
+  }
+}

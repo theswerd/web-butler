@@ -1,0 +1,5 @@
+/* The shared package sheet brings Tailwind (webbutler: prefix), the design
+   tokens, and its own @source registration. Story files live outside the
+   package, so register them explicitly too. */
+@import '@web-butler/ui/style.css';
+@source '../stories';

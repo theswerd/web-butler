@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1784682750275,
+      "tag": "0000_stiff_bruce_banner",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784685411740,
+      "tag": "0001_wealthy_warlock",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784743963097,
+      "tag": "0002_wooden_skullbuster",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784748311587,
+      "tag": "0003_sudden_celestials",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784752645053,
+      "tag": "0004_familiar_mentallo",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784757919582,
+      "tag": "0005_slippery_reptil",
+      "breakpoints": true
+    }
+  ]
+}

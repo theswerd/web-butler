@@ -1,0 +1,5 @@
+/* All tokens and Tailwind setup live in the shared package; this file exists
+   so the extension's own sources (App.tsx, entrypoints) are auto-detected by
+   Tailwind relative to this app while the package registers itself via
+   @source in the imported sheet. */
+@import '@web-butler/ui/style.css';
