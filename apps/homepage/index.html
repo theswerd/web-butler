@@ -123,8 +123,34 @@
       </section>
     </section>
 
+    <!-- The bridge between the demo and the button: three steps, no cards. -->
+    <section class="how" aria-label="How it works">
+      <h2 class="sec-title">How it works</h2>
+      <ol class="how-steps">
+        <li>
+          <span class="how-num">01</span>
+          <h3>Install the extension</h3>
+          <p>Chrome, or anything Chromium. One toggle to flip: allow user
+            scripts, so page changes can stick around.</p>
+        </li>
+        <li>
+          <span class="how-num">02</span>
+          <h3>Sign in with your AI</h3>
+          <p>ChatGPT, Claude, or Grok. The plan you already pay for does the
+            thinking; there is no Web Butler subscription.</p>
+        </li>
+        <li>
+          <span class="how-num">03</span>
+          <h3>Ask on any page</h3>
+          <p>Press <kbd>⌘E</kbd> and say the word. Answers about the page,
+            errands in your tabs, alterations that hold, reports in the
+            side panel.</p>
+        </li>
+      </ol>
+    </section>
+
     <section class="faq" aria-label="Frequently asked questions">
-      <h2 class="faq-title">Questions</h2>
+      <h2 class="sec-title">Questions</h2>
       <details>
         <summary>Does this follow the ChatGPT/Grok/Claude Terms of Service?</summary>
         <p>Maybe, probably not. I never checked.</p>
@@ -145,6 +171,24 @@
         <summary>Is it open source?</summary>
         <p>Fully. The whole service is at <a href="https://github.com/theswerd/web-butler">theswerd/web-butler</a>.</p>
       </details>
+    </section>
+
+    <!-- Honest for now: no store listing, but the whole thing is runnable. -->
+    <section class="install" id="install" aria-label="Install">
+      <h2 class="sec-title">Install</h2>
+      <p class="install-lede">
+        Web Butler isn't on the Chrome Web Store yet. It is open source front
+        to back, so the impatient can run the whole service today: the
+        extension loads unpacked, and the server runs on your own keys.
+      </p>
+      <pre class="install-clone"><code>git clone https://github.com/theswerd/web-butler</code></pre>
+      <p class="install-note">
+        The README walks through the rest: the server, a database, a sandbox
+        key, and the load-unpacked step.
+      </p>
+      <div class="install-cta">
+        <a class="btn-ghost" href="https://github.com/theswerd/web-butler#readme">Read the setup guide</a>
+      </div>
     </section>
 
   </main>
