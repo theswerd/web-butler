@@ -20,9 +20,15 @@ type ElementPickerOverlayProps = {
   onCancel: () => void;
 };
 
-/** True for nodes that belong to the extension itself, never pickable. */
+/**
+ * True for nodes that belong to the shell itself, never pickable. In the
+ * extension the shell renders in a shadow root under a <web-butler> host, so
+ * elementsFromPoint surfaces the host element and the self-match catches it.
+ * In a light-DOM mount (the homepage demo) the shell's own nodes come back
+ * directly, so the ancestor walk is what filters them out.
+ */
 function isOurs(el: Element): boolean {
-  return el.tagName.toLowerCase() === 'web-butler';
+  return el.closest('web-butler') != null;
 }
 
 /**

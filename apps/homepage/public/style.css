@@ -275,6 +275,9 @@ main { max-width: 960px; margin: 0 auto; padding: 0 24px; }
   left: 18px;
   right: 18px;
   bottom: 14px;
+  /* The live pick layer and selection highlights inside are position:fixed;
+     lift them above everything else on the page. */
+  z-index: 5;
 }
 .butler #web-butler-root { width: 100%; }
 
