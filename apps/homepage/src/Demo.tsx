@@ -72,25 +72,25 @@ const SCENARIOS: Scenario[] = [
   {
     id: 'ask',
     tab: 'Answers',
-    addr: 'help.example',
+    addr: 'help.northwind.app',
     prompt: 'Can I cancel without losing my files?',
   },
   {
     id: 'edit',
     tab: 'Alterations',
-    addr: 'your-feed.example',
+    addr: 'feed.rivulet.social',
     prompt: 'Always hide the sponsored posts here',
   },
   {
     id: 'form',
     tab: 'Errands',
-    addr: 'checkout.example',
+    addr: 'checkout.marketlane.co',
     prompt: 'Fill this checkout form from my saved details',
   },
   {
     id: 'report',
     tab: 'Reports',
-    addr: 'plans.example',
+    addr: 'pricing.atlaswork.com',
     prompt: 'Compare these plans into a report',
   },
 ];
@@ -101,7 +101,7 @@ const ASK_ANSWER =
   'then Export.';
 
 /** The report itself, delivered into the demo's side panel. */
-const REPORT_MD = `Three tiers on plans.example, read side by side.
+const REPORT_MD = `Three tiers on pricing.atlaswork.com, read side by side.
 
 |  | Basic | Pro | Team |
 | --- | --- | --- | --- |
@@ -434,7 +434,7 @@ export function Demo() {
                 <ReportView
                   title="Plan comparison"
                   description="Prices, limits, and the fine print, side by side."
-                  meta="Filed by Web Butler · plans.example"
+                  meta="Filed by Web Butler · pricing.atlaswork.com"
                   text={REPORT_MD}
                 />
               </div>
@@ -504,7 +504,7 @@ export function Demo() {
                               text="Installed"
                               title="Hide sponsored posts"
                               description="Hides sponsored posts in this feed, on every visit."
-                              urlPatterns={['https://your-feed.example/*']}
+                              urlPatterns={['https://feed.rivulet.social/*']}
                               scriptingAllowed
                               extensionEnabled={editEnabled}
                               onExtensionToggle={(on) => {
@@ -730,7 +730,7 @@ function FormStage({ step }: { step: number }) {
         />
         <DemoField
           label="Email"
-          value={step >= 2 ? 'avery@example.com' : ''}
+          value={step >= 2 ? 'avery@marketlane.co' : ''}
           active={step === 2}
           field="email"
         />
