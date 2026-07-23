@@ -251,6 +251,12 @@ main {
   font-weight: 500;
   cursor: default;
 }
+.btn-add-icon {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+.btn-add-icon[hidden] { display: none; }
 .btn-add .soon {
   padding: 2px 7px;
   border-radius: 999px;
