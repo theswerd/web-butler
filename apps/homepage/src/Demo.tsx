@@ -134,9 +134,15 @@ export function Demo() {
 
   const mountRef = useRef<HTMLDivElement | null>(null);
   const timersRef = useRef<number[]>([]);
-  // Frozen theaters (?scene= param, reduced motion) rest on the done state
-  // and only move when a tab is pressed.
+  // Frozen theaters (?scene= param, reduced motion) rest on the done state.
+  // A deliberate tab press unfreezes ?scene= theaters; reduced motion stays.
   const staticRef = useRef(false);
+  // Once the visitor picks a tab, the carousel stops: scenes play through
+  // and rest on their ending until the next click (or a Replay press).
+  const manualRef = useRef(false);
+  const [reduced] = useState(() =>
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  );
 
   const later = (ms: number, fn: () => void) => {
     timersRef.current.push(window.setTimeout(fn, ms));
@@ -162,7 +168,11 @@ export function Demo() {
     }
     setPhase('typing');
     const prompt = SCENARIOS[index].prompt;
-    const advance = () => startScene((index + 1) % SCENARIOS.length);
+    // The idle loop tours all four errands; once the visitor has taken the
+    // controls, a scene plays through and then holds its ending.
+    const advance = () => {
+      if (!manualRef.current) startScene((index + 1) % SCENARIOS.length);
+    };
     let i = 0;
     const typeNext = () => {
       i += 1;
@@ -302,7 +312,7 @@ export function Demo() {
       setPhase(id === 'report' ? 'panel' : 'done');
       return;
     }
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (reduced) {
       // No theater: rest on the first delivered state; tabs still switch.
       staticRef.current = true;
       setOpen(true);
@@ -352,6 +362,12 @@ export function Demo() {
 
   const selectScene = (index: number) => {
     setOpen(true);
+    // A click always earns the full performance, even on frozen (?scene=)
+    // theaters. Reduced-motion viewers keep their still endings.
+    if (!reduced) {
+      staticRef.current = false;
+      manualRef.current = true;
+    }
     startScene(index);
   };
 
@@ -581,6 +597,30 @@ export function Demo() {
                   ) : null}
                 </button>
               ))}
+              {/* Run the current errand again from the top. */}
+              {!reduced ? (
+                <button
+                  type="button"
+                  className="replay"
+                  onClick={() => selectScene(sceneIndex)}
+                >
+                  <svg
+                    width="11"
+                    height="11"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M3 12a9 9 0 1 0 2.8-6.5" />
+                    <path d="M3 4v5h5" />
+                  </svg>
+                  Replay
+                </button>
+              ) : null}
             </div>,
             tabsHost,
           )
