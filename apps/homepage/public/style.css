@@ -315,6 +315,28 @@ main {
   border: 1px solid var(--accent);
   border-radius: 8px;
   background: rgba(59, 130, 246, 0.06);
+  transition: background-color 150ms;
+}
+
+/* Hovering the p.policy chip in the shell: the box's own border stays the
+   only line; a soft pulsing halo breathes behind it (and behind the label
+   pill, which rides on top as a child). Mirrors ElementHighlight's
+   emphasis values in the extension. */
+.article .picked.glowing {
+  background: rgba(59, 130, 246, 0.14);
+  animation: picked-pulse 0.9s ease-in-out infinite alternate;
+}
+@keyframes picked-pulse {
+  from {
+    box-shadow:
+      0 0 0 3px rgba(59, 130, 246, 0.15),
+      0 0 16px 2px rgba(59, 130, 246, 0.25);
+  }
+  to {
+    box-shadow:
+      0 0 0 5px rgba(59, 130, 246, 0.22),
+      0 0 28px 6px rgba(59, 130, 246, 0.4);
+  }
 }
 .article .picked-label {
   position: absolute;

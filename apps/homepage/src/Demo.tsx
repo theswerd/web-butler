@@ -2,7 +2,6 @@ import {
   AnswerCard,
   CollapsedPill,
   ContextChips,
-  ElementHighlight,
   GhostCursor,
   INITIAL_GHOST_CURSOR,
   PlusButton,
@@ -396,7 +395,7 @@ export function Demo() {
           aria-hidden="true"
         >
           {scene.id === 'ask' ? (
-            <ArticleStage />
+            <ArticleStage glow={chipGlow} />
           ) : scene.id === 'edit' ? (
             <FeedStage />
           ) : scene.id === 'form' ? (
@@ -594,27 +593,6 @@ export function Demo() {
         document.body,
       )}
 
-      {/* The chip-hover glow: the extension's own ElementHighlight, riding
-          the picked box. Same containing-block story as the cursor. */}
-      {createPortal(
-        <web-butler>
-          <div
-            id="web-butler-root"
-            style={{ '--wc-selection': ACCENT } as CSSProperties}
-          >
-            <AnimatePresence>
-              {open && scene.id === 'ask' && chipGlow ? (
-                <ElementHighlight
-                  element={ASK_CHIP}
-                  accentColor={ACCENT}
-                  emphasis
-                />
-              ) : null}
-            </AnimatePresence>
-          </div>
-        </web-butler>,
-        document.body,
-      )}
 
       {/* Scenario tabs live outside the window frame. */}
       {tabsHost
@@ -682,8 +660,9 @@ function Post({ lines, sponsored }: { lines: string[]; sponsored?: boolean }) {
   );
 }
 
-/** A help-center article; one paragraph carries the pick ring. */
-function ArticleStage() {
+/** A help-center article; one paragraph carries the pick ring. Hovering
+    the p.policy chip in the shell pulses a glow on it (`glow`). */
+function ArticleStage({ glow = false }: { glow?: boolean }) {
   return (
     <div className="article">
       <span className="headline" />
@@ -691,7 +670,7 @@ function ArticleStage() {
       <span className="line w-80" />
       <span className="line w-72" />
       <span className="line w-64" />
-      <div className="picked">
+      <div className={glow ? 'picked glowing' : 'picked'}>
         <span className="picked-label">p.policy</span>
         <span className="line w-80" />
         <span className="line w-72" />
