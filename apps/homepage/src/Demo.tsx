@@ -7,8 +7,11 @@ import {
   PlusButton,
   PromptPanel,
   resolvePickedElement,
+  shellVariants,
+  SPRING_UI,
   type PickedElement,
 } from '@web-butler/ui';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   useEffect,
   useRef,
@@ -220,73 +223,128 @@ export function Demo() {
             id="web-butler-root"
             style={{ '--wc-selection': ACCENT, height: 'auto' } as CSSProperties}
           >
+            {/* Pill <-> open dock, swapped exactly like the extension's App:
+                mode="wait" so the pill fades/shrinks out before the dock
+                springs in, both anchored to the bottom-center dock edge. */}
             <div
               style={{
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
-                gap: 8,
               }}
             >
-              {!live && phase === 'done' ? (
-                <AnswerCard
-                  tier="extension"
-                  text="Installed"
-                  title="Hide sponsored posts"
-                  description="Hides sponsored posts in this feed, on every visit."
-                  urlPatterns={['https://your-feed.example/*']}
-                  scriptingAllowed
-                  extensionEnabled={enabled}
-                  onExtensionToggle={setEnabled}
-                />
-              ) : null}
-              {live && answer !== null ? (
-                <AnswerCard
-                  tier="answer"
-                  text={answer}
-                  onDismiss={() => setAnswer(null)}
-                />
-              ) : null}
-              {live && picked.length > 0 ? (
-                <div style={{ width: '100%' }}>
-                  <ContextChips
-                    elements={picked}
-                    missingIds={NO_MISSING}
-                    onRemove={(id) =>
-                      setPicked((prev) => prev.filter((p) => p.id !== id))
-                    }
-                    onHover={(element) => setHoveredChip(element?.id ?? null)}
-                    onJump={(element) => {
-                      resolvePickedElement(element)?.scrollIntoView({
-                        behavior: 'smooth',
-                        block: 'center',
-                      });
+              <AnimatePresence mode="wait" initial={false}>
+                {showPrompt ? (
+                  <motion.div
+                    key="open"
+                    variants={shellVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="hidden"
+                    style={{
+                      transformOrigin: 'bottom center',
+                      width: '100%',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: 8,
                     }}
-                  />
-                </div>
-              ) : null}
-              {showPrompt ? (
-                <div style={{ width: '100%' }}>
-                  <PromptPanel
-                    leading={
-                      <PlusButton
-                        unread={0}
-                        open={false}
-                        onClick={noop}
-                        working={working}
+                  >
+                    {/* Answers rise into the dock with the extension's
+                        answer-slot spring. */}
+                    <AnimatePresence initial={false}>
+                      {!live && phase === 'done' ? (
+                        <motion.div
+                          key="theater-answer"
+                          initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.98 }}
+                          transition={SPRING_UI}
+                          style={{ width: '100%' }}
+                        >
+                          <AnswerCard
+                            tier="extension"
+                            text="Installed"
+                            title="Hide sponsored posts"
+                            description="Hides sponsored posts in this feed, on every visit."
+                            urlPatterns={['https://your-feed.example/*']}
+                            scriptingAllowed
+                            extensionEnabled={enabled}
+                            onExtensionToggle={setEnabled}
+                          />
+                        </motion.div>
+                      ) : null}
+                      {live && answer !== null ? (
+                        <motion.div
+                          key="live-answer"
+                          initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.98 }}
+                          transition={SPRING_UI}
+                          style={{ width: '100%' }}
+                        >
+                          <AnswerCard
+                            tier="answer"
+                            text={answer}
+                            onDismiss={() => setAnswer(null)}
+                          />
+                        </motion.div>
+                      ) : null}
+                    </AnimatePresence>
+                    {live && picked.length > 0 ? (
+                      <div style={{ width: '100%' }}>
+                        <ContextChips
+                          elements={picked}
+                          missingIds={NO_MISSING}
+                          onRemove={(id) =>
+                            setPicked((prev) =>
+                              prev.filter((p) => p.id !== id),
+                            )
+                          }
+                          onHover={(element) =>
+                            setHoveredChip(element?.id ?? null)
+                          }
+                          onJump={(element) => {
+                            resolvePickedElement(element)?.scrollIntoView({
+                              behavior: 'smooth',
+                              block: 'center',
+                            });
+                          }}
+                        />
+                      </div>
+                    ) : null}
+                    <div style={{ width: '100%' }}>
+                      <PromptPanel
+                        leading={
+                          <PlusButton
+                            unread={0}
+                            open={false}
+                            onClick={noop}
+                            working={working}
+                          />
+                        }
+                        value={live ? draft : typed}
+                        onValueChange={live ? setDraft : noop}
+                        onSubmit={live ? handleSubmit : undefined}
+                        loading={working}
+                        pickerActive={picking}
+                        onTogglePicker={togglePicker}
                       />
-                    }
-                    value={live ? draft : typed}
-                    onValueChange={live ? setDraft : noop}
-                    onSubmit={live ? handleSubmit : undefined}
-                    loading={working}
-                    pickerActive={picking}
-                    onTogglePicker={togglePicker}
-                  />
-                </div>
-              ) : (
-                <CollapsedPill onOpen={takeControl} />
-              )}
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="collapsed"
+                    variants={shellVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="hidden"
+                    style={{ transformOrigin: 'bottom center' }}
+                  >
+                    <CollapsedPill onOpen={takeControl} />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             {/* The real pick layer, over this very page. Esc cancels,
