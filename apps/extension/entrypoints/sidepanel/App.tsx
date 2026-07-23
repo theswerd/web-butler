@@ -59,6 +59,22 @@ function App() {
                       .catch(() => {})
                 : undefined
             }
+            onOpenExtension={
+              state.task.extensionId
+                ? () =>
+                    void browser.runtime
+                      .sendMessage({
+                        type: MESSAGE.SHELL_REVEAL_EXTENSION,
+                        extensionId: state.task.extensionId,
+                      })
+                      .catch(() => {})
+                : undefined
+            }
+            onUseSuggestion={(text) =>
+              void browser.runtime
+                .sendMessage({ type: MESSAGE.SHELL_PREFILL, text })
+                .catch(() => {})
+            }
           />
         ) : state?.kind === 'report' && state.report ? (
           <ReportView

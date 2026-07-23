@@ -110,6 +110,10 @@ export type MenuExtensionsProps = {
   pageUrl?: string;
   /** "Fix" on a broken row — the shell sends a repair prompt. */
   onFix?: (extension: SiteExtension) => void;
+  /** Scroll-to-and-flash one row on arrival — set when the menu was
+      opened from outside (the side panel's "View extension" button).
+      In-menu highlights (a task row's chip) don't need it. */
+  highlightId?: string;
 };
 
 /** The Providers view's slices, one per provider. */
@@ -440,7 +444,7 @@ export function MenuPanel({
             onOpenSettings={extensions.onOpenSettings}
             pageUrl={extensions.pageUrl}
             onFix={extensions.onFix}
-            highlightId={highlightExtensionId ?? undefined}
+            highlightId={highlightExtensionId ?? extensions.highlightId}
           />
         ) : null}
       </div>

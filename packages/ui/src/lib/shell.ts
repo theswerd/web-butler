@@ -125,6 +125,9 @@ export type Task = {
   /** The latest line of the live activity feed while running — what the
       butler is doing RIGHT NOW, surfaced on task chips in every tab. */
   activity?: string;
+  /** Follow-up prompts the agent offered when the task settled — shown as
+      one-tap "suggested next" chips in the task activity view. */
+  suggestions?: string[];
 };
 
 /**
@@ -319,6 +322,13 @@ export const MESSAGE = {
   PANEL_CHANGED: 'web-butler/panel-changed',
   /** Swap an already-open panel from a task view to its report. */
   PANEL_FOCUS_REPORT: 'web-butler/panel-focus-report',
+  // Side panel → background → the active tab's shell.
+  /** Open the shell's menu on Extensions, highlighting one extension —
+      the task activity view's "View extension" button. */
+  SHELL_REVEAL_EXTENSION: 'web-butler/shell-reveal-extension',
+  /** Prefill the shell's prompt with a suggested follow-up and focus it —
+      the task activity view's "suggested next" chips. */
+  SHELL_PREFILL: 'web-butler/shell-prefill',
   // Artifact list: content ↔ background.
   /** Fetch all artifacts of the session (menu Artifacts view). */
   REPORTS_GET: 'web-butler/reports-get',
@@ -429,6 +439,8 @@ export type WebButlerMessage =
   | { type: typeof MESSAGE.PANEL_GET }
   | { type: typeof MESSAGE.PANEL_CHANGED; state: PanelState }
   | { type: typeof MESSAGE.PANEL_FOCUS_REPORT; reportId: string }
+  | { type: typeof MESSAGE.SHELL_REVEAL_EXTENSION; extensionId: string }
+  | { type: typeof MESSAGE.SHELL_PREFILL; text: string }
   | { type: typeof MESSAGE.REPORTS_GET }
   | { type: typeof MESSAGE.REPORTS_DELETE; id: string }
   | { type: typeof MESSAGE.REPORTS_CLEAR }

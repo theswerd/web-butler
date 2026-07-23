@@ -30,7 +30,8 @@ Declare it in your outcomes file as:
   }]
 }
 
-- "action": "create" for a new extension. To change an existing one (they are listed in the envelope under "Extensions active on this page"), use "update" with its "id" and include ALL fields again (the script is replaced whole, not patched). To remove one, use "delete" with its "id"; other fields can repeat the stored values.
+- "action": "create" for a new extension. To change an existing one (they are listed in the envelope under "Installed extensions"), use "update" with its "id" and include ALL fields again (the script is replaced whole, not patched). To remove one, use "delete" with its "id"; other fields can repeat the stored values.
+- Updating or merging starts from the CURRENT source: every installed extension's script is on your disk at the Source path listed in the envelope — read it first, never rewrite from memory. To merge several extensions into one, a single outcomes file carries one "update" for the survivor (script covering the combined behavior, urlPatterns the union) plus one "delete" per absorbed extension. This is the only case where the outcomes array holds more than one entry.
 - "name": short, imperative, user-facing. "description": one sentence, user-facing.
 - "urlPatterns": Chrome match patterns. "*://*.youtube.com/*" is every page on youtube.com and subdomains over http/https. Extensions can span sites: ["*://*.reddit.com/*", "*://*.twitter.com/*"]. Prefer the narrowest pattern that covers the request; use path suffixes like "*://github.com/*/pulls*" when it is page-specific.
 - "stage": when the script first runs. "document_idle" (default, page settled) unless you must act before the page renders: "document_start" runs before the DOM exists (style-only changes), "document_end" at DOMContentLoaded.

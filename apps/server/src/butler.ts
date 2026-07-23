@@ -24,6 +24,25 @@ import { WORKSPACE_DIR } from './acp';
 /** Where turn outcome files land on the VM. Created by the ACP prep step. */
 export const OUTCOME_DIR = `${WORKSPACE_DIR}/.butler`;
 
+/**
+ * Where the user's stored work is mirrored onto the VM so the agent can
+ * READ it: each installed extension's current script and each past
+ * report's markdown. The envelope lists these paths; merging or updating
+ * an extension starts with reading its current source, and "like that
+ * report from earlier" starts with reading the report.
+ */
+export const CONTEXT_DIR = `${OUTCOME_DIR}/context`;
+
+/** VM path of one installed extension's current script. */
+export function extensionSourcePath(id: string): string {
+  return `${CONTEXT_DIR}/extensions/${id}.js`;
+}
+
+/** VM path of one past report's markdown. */
+export function reportSourcePath(id: string): string {
+  return `${CONTEXT_DIR}/reports/${id}.md`;
+}
+
 const selectedElementSchema = z.object({
   /** CSS path, resolvable on the page at pick time. */
   selector: z.string(),
@@ -172,8 +191,90 @@ export function extensionProblem(outcome: ExtensionOutcome): string | null {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Turn context files: the user's stored work, readable on the VM.
+// ---------------------------------------------------------------------------
+
+/** What each context file already holds, per VM, so a turn only writes
+    what changed: extensions are versioned, reports immutable by id. Lives
+    in server memory — a restart just rewrites once. */
+const syncedContext = new Map<string, Map<string, number>>();
+
+/**
+ * Mirror the user's extensions (current scripts) and past reports onto the
+ * VM before a turn, so the agent can read what it is asked to build on.
+ * Best-effort: a failed write costs the agent a readable file, never the
+ * turn — the envelope still lists everything.
+ */
+export async function syncTurnContext(
+  vmId: string,
+  extensions: Array<{ id: string; version: number; script: string }>,
+  reports: Array<{
+    id: string;
+    title: string;
+    description: string;
+    text: string;
+  }>,
+): Promise<void> {
+  try {
+    const vm = getFreestyle().vms.ref({ vmId });
+    let memo = syncedContext.get(vmId);
+    if (!memo) {
+      // First sync since server start: the dirs may predate this feature
+      // on an old VM, and fs writes don't create parents. Only remember
+      // the VM once the mkdir lands, so a transient failure retries.
+      await vm.exec({
+        command: `mkdir -p ${CONTEXT_DIR}/extensions ${CONTEXT_DIR}/reports`,
+        timeoutMs: 15_000,
+      });
+      memo = new Map();
+      syncedContext.set(vmId, memo);
+    }
+    const writes: Array<Promise<unknown>> = [];
+    for (const ext of extensions) {
+      const key = `ext:${ext.id}`;
+      if (memo.get(key) === ext.version) continue;
+      writes.push(
+        vm.fs
+          .writeTextFile(extensionSourcePath(ext.id), ext.script)
+          .then(() => memo.set(key, ext.version)),
+      );
+    }
+    for (const report of reports) {
+      const key = `report:${report.id}`;
+      if (memo.has(key)) continue;
+      const body =
+        `# ${report.title}\n\n` +
+        (report.description ? `${report.description}\n\n` : '') +
+        report.text;
+      writes.push(
+        vm.fs
+          .writeTextFile(reportSourcePath(report.id), body)
+          .then(() => memo.set(key, 1)),
+      );
+    }
+    await Promise.allSettled(writes);
+  } catch (error) {
+    console.warn(`[butler] context sync failed on ${vmId}:`, error);
+  }
+}
+
+/** Follow-up prompts the agent may offer alongside its outcomes. Junk
+    entries are dropped one by one rather than failing the field (or the
+    file): losing a suggestion is nothing, losing the outcome next to it
+    is the turn. */
+const suggestionsSchema = z.unknown().transform((value): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map((entry) => entry.trim().slice(0, 120))
+    .filter((entry) => entry.length > 0)
+    .slice(0, 3);
+});
+
 const outcomesFileSchema = z.object({
   outcomes: z.array(outcomeSchema).min(1),
+  suggestions: suggestionsSchema.optional(),
 });
 
 /**
@@ -220,7 +321,8 @@ Each user message arrives inside an envelope describing where they were:
 - "Current page": the URL and title of the page the message was sent from.
 - "Selected elements": present when the user explicitly picked elements on the page as context. Each comes with its CSS selector, visible text, and outer HTML. One marked "no longer on the page" has been removed since it was picked; it is still meaningful context.
 - "Page HTML snapshot": the page's DOM with scripts and styles stripped, possibly truncated. Use it to answer questions about the page without asking the user to describe it.
-- "Installed extensions": every page modification you have installed for this user, with the ones matching the current page marked. When asked to change something an existing extension already touches, update or delete that extension (by id) rather than stacking a new one. Ones installed for other sites tell you what the user has asked for elsewhere.
+- "Installed extensions": every page modification you have installed for this user, with the ones matching the current page marked. Each entry lists a Source path: the extension's CURRENT script, on your disk — read it before updating or merging, never rewrite from memory. When asked to change something an existing extension already touches, update or delete that extension (by id) rather than stacking a new one. Ones installed for other sites tell you what the user has asked for elsewhere.
+- "Past reports": long-form documents you produced earlier, each with the path its full markdown is stored at on your disk. When the user references earlier work ("like that report", "update the comparison", "based on what you found") read the relevant file rather than guessing at what it said.
 - "Ongoing tasks": other requests of yours still running right now (possibly in other conversations). Don't duplicate their work; if the user asks about one, report what you know from the listing.
 - "Recent tasks": the user's request history, newest first, with how each ended and what it produced. Use it for continuity: "do that again", "like last time", or follow-ups referencing earlier work.
 - "User message": the actual instruction. This is what you act on; everything above it is context.
@@ -231,9 +333,9 @@ The outcome file is the ONLY thing the user sees, and the ONLY channel that crea
 
 At the end of EVERY turn, write a JSON file at the exact path given in that turn's "Turn outcome" section (the path changes every turn; overwrite if it somehow exists). The file must be:
 
-{ "outcomes": [ <outcome> ] }
+{ "outcomes": [ <outcome> ], "suggestions": [ "..." ] }
 
-with exactly one outcome, one of:
+with exactly one outcome (the single exception is extension merges, described below), one of:
 
 1. A short response, for quick answers, confirmations, and small findings:
    { "type": "response", "markdown": "..." }
@@ -246,6 +348,14 @@ with exactly one outcome, one of:
 3. A page extension, when the user asks to change a website persistently ("hide X", "add Y to this page", "always do Z here"). This installs a script that re-applies on every future visit. Before writing one, read the authoring contract at skills/page-extension/SKILL.md in your workspace — it specifies the exact script shape and the outcome fields. Do not produce an extension outcome without following it.
 
 Prefer a response unless the user asked for something substantial enough to deserve a document, or for a page change that should persist. Never put a long document into a response.
+
+### Merging extensions
+
+When the user asks to combine, consolidate, or clean up their extensions (or one request naturally folds several into one), a single turn's file may carry SEVERAL extension outcomes: one "update" for the surviving extension — read every source file involved first, and write a script that covers the combined behavior with the union of their urlPatterns — plus one "delete" outcome (with its id, name, and description) for each extension absorbed into it. This is the only case where the outcomes array holds more than one entry.
+
+### Suggested next prompts
+
+"suggestions" is optional: up to three follow-up prompts the user might plausibly send next, shown as one-tap chips when your task finishes. Write each in the user's voice, under ~60 characters, concrete to THIS task's result ("Draft a reply to the top comment", "Do the same for the pricing page") — never generic filler like "anything else?". Omit the field when no natural next step exists.
 
 ## Acting in the page (browser control)
 
@@ -312,6 +422,14 @@ export type TurnExtras = {
     finishedAt?: number;
     url?: string;
   }>;
+  /** Past long-form reports, newest first — each mirrored to a VM file
+      (reportSourcePath) the agent can read to build on earlier work. */
+  reports?: Array<{
+    id: string;
+    title: string;
+    description: string;
+    createdAt: number;
+  }>;
 };
 
 /** Compact host tag for envelope listings; silent for unparseable URLs. */
@@ -376,7 +494,8 @@ export function buildTurnMessage(
       const state = ext.enabled ? '' : ' (currently disabled)';
       return (
         `- ${ext.name}${state} · id: ${ext.id} · v${ext.version} · ` +
-        `patterns: ${ext.urlPatterns.join(', ')}\n  ${ext.description}`
+        `patterns: ${ext.urlPatterns.join(', ')}\n  ${ext.description}\n` +
+        `  Source: ${extensionSourcePath(ext.id)}`
       );
     };
     const onPage = extensions.filter((ext) => ext.onPage);
@@ -428,6 +547,21 @@ export function buildTurnMessage(
     );
   }
 
+  const reports = extras.reports ?? [];
+  if (reports.length > 0) {
+    const items = reports.map(
+      (report) =>
+        `- "${report.title}" · ${agoLabel(report.createdAt)}\n` +
+        `  ${report.description}\n  File: ${reportSourcePath(report.id)}`,
+    );
+    parts.push(
+      '## Past reports\n' +
+        'Documents you produced for this user earlier, newest first. Read ' +
+        "the file when one is relevant to what they're asking now.\n" +
+        items.join('\n'),
+    );
+  }
+
   const recent = extras.recentTasks ?? [];
   if (recent.length > 0) {
     const items = recent.map((task) => {
@@ -461,6 +595,8 @@ export function buildTurnMessage(
     could not accept — the caller can give it one corrective turn. */
 export type OutcomeRead = {
   outcomes: Outcome[];
+  /** Follow-up prompts the agent offered next to its outcomes. */
+  suggestions?: string[];
   /** Why the written file was rejected; unset when the file was simply
       missing (the fallback response is then business as usual). */
   invalid?: string;
@@ -498,7 +634,14 @@ export async function readOutcomes(
         const parsed = outcomesFileSchema.safeParse(
           normalizeOutcomesFile(JSON.parse(raw)),
         );
-        if (parsed.success) return { outcomes: parsed.data.outcomes };
+        if (parsed.success) {
+          return {
+            outcomes: parsed.data.outcomes,
+            suggestions: parsed.data.suggestions?.length
+              ? parsed.data.suggestions
+              : undefined,
+          };
+        }
         invalid = parsed.error.issues
           .slice(0, 3)
           .map((issue) => `${issue.path.join('.') || 'file'}: ${issue.message}`)

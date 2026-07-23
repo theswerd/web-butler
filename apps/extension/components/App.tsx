@@ -146,6 +146,12 @@ export function App() {
   // it (same agent session) instead of a fresh task — the task-shaped
   // sibling of referencing a page element.
   const [replyTaskId, setReplyTaskId] = useState<string | null>(null);
+  // Extension to scroll-to-and-flash when the menu's Extensions view next
+  // renders — set by the side panel's "View extension" button (relayed by
+  // the background), cleared when the menu closes.
+  const [revealExtensionId, setRevealExtensionId] = useState<string | null>(
+    null,
+  );
   // The butler's ghost cursor while it drives this tab (browser control).
   // Driven entirely by BROWSER_CURSOR messages from the background.
   const [ghostCursor, setGhostCursor] =
@@ -477,6 +483,15 @@ export function App() {
         if (message.open) open();
         else collapse();
       }
+      // Side panel actions landing in this (active) tab's shell.
+      if (message?.type === MESSAGE.SHELL_REVEAL_EXTENSION) {
+        setRevealExtensionId(message.extensionId);
+        patchShell({ mode: 'open', menuOpen: true, activeView: 'extensions' });
+      }
+      if (message?.type === MESSAGE.SHELL_PREFILL) {
+        patchShell({ mode: 'open', menuOpen: false, draft: message.text });
+        setFocusOnOpen(true);
+      }
       if (message?.type === MESSAGE.BROWSER_CURSOR) {
         const cursor = message.cursor;
         if (cursor.kind === 'hide') {
@@ -504,7 +519,14 @@ export function App() {
 
     browser.runtime.onMessage.addListener(onMessage);
     return () => browser.runtime.onMessage.removeListener(onMessage);
-  }, [toggle, open, collapse]);
+  }, [toggle, open, collapse, patchShell]);
+
+  // A reveal is a one-shot arrival effect: once the menu closes, a later
+  // plain visit to Extensions must not replay the scroll-and-flash.
+  const menuOpen = shell?.menuOpen === true;
+  useEffect(() => {
+    if (!menuOpen) setRevealExtensionId(null);
+  }, [menuOpen]);
 
   // Live mirrors for the close-combo handler: whether a message (answer
   // card) is on screen and whether a task reference is armed. Refs, not
@@ -958,6 +980,7 @@ export function App() {
                           onOpenSettings: openUserScriptsSettings,
                           pageUrl: window.location.href,
                           onFix: sendExtensionRepair,
+                          highlightId: revealExtensionId ?? undefined,
                         }}
                         providers={{
                           codex: { auth: codexAuth, onConnect: connectCodex },

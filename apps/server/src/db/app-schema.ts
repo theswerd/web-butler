@@ -56,8 +56,18 @@ export const task = pgTable(
      * replay in the side panel's activity view across sessions.
      */
     updates: jsonb('updates').$type<
-      Array<{ at: number; kind: 'thought' | 'message' | 'tool'; text: string }>
+      Array<{
+        at: number;
+        kind: 'thought' | 'message' | 'tool' | 'user';
+        text: string;
+      }>
     >(),
+    /**
+     * Follow-up prompts the agent offered when the task settled — the
+     * "suggested next" chips in the task activity view. Plain strings,
+     * a few at most.
+     */
+    suggestions: jsonb('suggestions').$type<string[]>(),
   },
   (table) => [index('task_user_started_idx').on(table.userId, table.startedAt)],
 );

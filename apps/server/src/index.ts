@@ -20,6 +20,7 @@ import {
   outcomeRetryMessage,
   pageContextSchema,
   readOutcomes,
+  syncTurnContext,
   type Outcome,
 } from './butler';
 import {
@@ -572,12 +573,14 @@ const taskSchema = z.object({
     .array(
       z.object({
         at: z.number(),
-        kind: z.enum(['thought', 'message', 'tool']),
+        kind: z.enum(['thought', 'message', 'tool', 'user']),
         text: z.string().max(20_000),
       }),
     )
     .max(250)
     .optional(),
+  /** "Suggested next" chips offered when the task settled. */
+  suggestions: z.array(z.string().max(200)).max(5).optional(),
 });
 
 const TASKS_LIMIT = 100;
@@ -617,6 +620,7 @@ app.get(
           reportId,
           extensionId,
           updates,
+          suggestions,
           ...row
         }) => ({
           ...row,
@@ -625,6 +629,7 @@ app.get(
           reportId: reportId ?? undefined,
           extensionId: extensionId ?? undefined,
           updates: updates ?? undefined,
+          suggestions: suggestions ?? undefined,
         }),
       ),
     );
@@ -1296,23 +1301,35 @@ app.post(
     const notThisRun = taskId
       ? and(eq(task.userId, userId), ne(task.id, taskId))
       : eq(task.userId, userId);
-    const [allExtensions, ongoingTaskRows, recentTaskRows] = await Promise.all([
-      db.query.extension.findMany({
-        where: eq(extension.userId, userId),
-        orderBy: [desc(extension.updatedAt)],
-        limit: 30,
-      }),
-      db.query.task.findMany({
-        where: and(notThisRun, eq(task.status, 'running')),
-        orderBy: [desc(task.startedAt)],
-        limit: 10,
-      }),
-      db.query.task.findMany({
-        where: and(notThisRun, ne(task.status, 'running')),
-        orderBy: [desc(task.startedAt)],
-        limit: 15,
-      }),
-    ]);
+    const [allExtensions, ongoingTaskRows, recentTaskRows, reportRows] =
+      await Promise.all([
+        db.query.extension.findMany({
+          where: eq(extension.userId, userId),
+          orderBy: [desc(extension.updatedAt)],
+          limit: 30,
+        }),
+        db.query.task.findMany({
+          where: and(notThisRun, eq(task.status, 'running')),
+          orderBy: [desc(task.startedAt)],
+          limit: 10,
+        }),
+        db.query.task.findMany({
+          where: and(notThisRun, ne(task.status, 'running')),
+          orderBy: [desc(task.startedAt)],
+          limit: 15,
+        }),
+        db.query.report.findMany({
+          where: eq(report.userId, userId),
+          orderBy: [desc(report.createdAt)],
+          limit: 12,
+        }),
+      ]);
+
+    // Mirror the stored work onto the VM so the agent can READ it: each
+    // extension's current script (the ground truth for updates/merges) and
+    // each report's markdown (for "like that report from earlier"). The
+    // envelope below lists the file paths.
+    await syncTurnContext(vmId, allExtensions, reportRows);
 
     const clip = (text: string, max: number) =>
       text.length > max ? `${text.slice(0, max - 3)}…` : text;
@@ -1356,6 +1373,12 @@ app.post(
         title: clip(tab.title, 120),
         url: tab.url,
         active: tab.active,
+      })),
+      reports: reportRows.map((row) => ({
+        id: row.id,
+        title: row.title,
+        description: clip(row.description, 200),
+        createdAt: row.createdAt,
       })),
     });
 
@@ -1497,7 +1520,13 @@ app.post(
               taskId,
               read.outcomes,
             );
-            line({ done: true, stopReason, text: reply, outcomes });
+            line({
+              done: true,
+              stopReason,
+              text: reply,
+              outcomes,
+              suggestions: read.suggestions,
+            });
           })
           .catch((error: unknown) => {
             console.error(`[acp:${provider}] turn failed:`, error);

@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { HiCheck, HiOutlineWrenchScrewdriver, HiXMark } from 'react-icons/hi2';
+import {
+  HiArrowUpRight,
+  HiCheck,
+  HiOutlineDocumentText,
+  HiOutlinePuzzlePiece,
+  HiOutlineWrenchScrewdriver,
+  HiXMark,
+} from 'react-icons/hi2';
 import type { Task, TaskUpdate } from '../../lib/shell';
 import { BowtieMark } from '../shell/BowtieMark';
 import { MarkdownLite } from '../MarkdownLite';
@@ -20,6 +27,12 @@ export type TaskActivityViewProps = {
   /** Set when the task produced a report — renders an "Open report"
       action that swaps the panel over to it. */
   onOpenReport?: () => void;
+  /** Set when the task installed/updated an extension — renders a "View
+      extension" action that reveals it in the shell's Extensions view. */
+  onOpenExtension?: () => void;
+  /** A "suggested next" chip was tapped — the shell prefills its prompt
+      with the suggestion so the user can send (or edit) it. */
+  onUseSuggestion?: (text: string) => void;
 };
 
 /** "0:42", "12:04" — elapsed while running, final duration once settled. */
@@ -69,6 +82,8 @@ export function TaskActivityView({
   task,
   updates,
   onOpenReport,
+  onOpenExtension,
+  onUseSuggestion,
 }: TaskActivityViewProps) {
   // Tick each second while running so the elapsed clock moves.
   const [now, setNow] = useState(() => Date.now());
@@ -198,17 +213,69 @@ export function TaskActivityView({
           </p>
         ) : null}
 
-        {/* The task produced a report — the feed is the making-of, the
-            report is the result. One tap swaps the panel over. */}
-        {onOpenReport ? (
-          <div className="webbutler:pt-3">
-            <button
-              type="button"
-              onClick={onOpenReport}
-              className="webbutler:cursor-pointer webbutler:rounded-full webbutler:bg-[var(--wc-accent)] webbutler:px-3 webbutler:py-1 webbutler:text-[11px] webbutler:font-medium webbutler:text-[var(--wc-accent-fg)] webbutler:transition-shadow webbutler:duration-100 webbutler:hover:shadow-[inset_0_0_0_999px_rgba(255,255,255,0.16)]"
-            >
-              Open report
-            </button>
+        {/* The task's outputs — the feed is the making-of, these are the
+            results. One tap opens each. */}
+        {onOpenReport || onOpenExtension ? (
+          <div className="webbutler:flex webbutler:flex-wrap webbutler:gap-1.5 webbutler:pt-3">
+            {onOpenReport ? (
+              <button
+                type="button"
+                onClick={onOpenReport}
+                className="webbutler:flex webbutler:cursor-pointer webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:bg-[var(--wc-accent)] webbutler:px-3 webbutler:py-1 webbutler:text-[11px] webbutler:font-medium webbutler:text-[var(--wc-accent-fg)] webbutler:transition-shadow webbutler:duration-100 webbutler:hover:shadow-[inset_0_0_0_999px_rgba(255,255,255,0.16)]"
+              >
+                <HiOutlineDocumentText size={12} aria-hidden />
+                Open report
+              </button>
+            ) : null}
+            {onOpenExtension ? (
+              <button
+                type="button"
+                onClick={onOpenExtension}
+                className={`webbutler:flex webbutler:cursor-pointer webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:px-3 webbutler:py-1 webbutler:text-[11px] webbutler:font-medium webbutler:transition-shadow webbutler:duration-100 ${
+                  onOpenReport
+                    ? // Secondary next to the report button; the headline
+                      // when it's the task's only output.
+                      'webbutler:border webbutler:border-[var(--wc-border)] webbutler:text-[var(--wc-ink)] webbutler:hover:shadow-[inset_0_0_0_999px_var(--wc-hover-1)]'
+                    : 'webbutler:bg-[var(--wc-accent)] webbutler:text-[var(--wc-accent-fg)] webbutler:hover:shadow-[inset_0_0_0_999px_rgba(255,255,255,0.16)]'
+                }`}
+              >
+                <HiOutlinePuzzlePiece size={12} aria-hidden />
+                View extension
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Where to go from here — the agent's suggested follow-ups, one
+            tap each to prefill the shell's prompt. Settled tasks only:
+            while running they'd be stale before they landed. */}
+        {task.status !== 'running' &&
+        onUseSuggestion &&
+        task.suggestions &&
+        task.suggestions.length > 0 ? (
+          <div className="webbutler:pt-4">
+            <p className="webbutler:pb-1.5 webbutler:text-[9px] webbutler:font-medium webbutler:tracking-[0.07em] webbutler:text-[var(--wc-text-4)] webbutler:uppercase">
+              Suggested next
+            </p>
+            <div className="webbutler:flex webbutler:flex-col webbutler:items-start webbutler:gap-1.5">
+              {task.suggestions.map((suggestion) => (
+                <button
+                  key={suggestion}
+                  type="button"
+                  onClick={() => onUseSuggestion(suggestion)}
+                  className="webbutler:flex webbutler:max-w-full webbutler:cursor-pointer webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:border webbutler:border-[var(--wc-border)] webbutler:px-2.5 webbutler:py-1 webbutler:text-left webbutler:text-[11px] webbutler:leading-4 webbutler:text-[var(--wc-text-2)] webbutler:transition-[border-color,box-shadow,color] webbutler:duration-100 webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:text-[var(--wc-ink)] webbutler:hover:shadow-[inset_0_0_0_999px_var(--wc-hover-1)]"
+                >
+                  <HiArrowUpRight
+                    size={10}
+                    aria-hidden
+                    className="webbutler:shrink-0 webbutler:text-[var(--wc-text-4)]"
+                  />
+                  <span className="webbutler:min-w-0 webbutler:truncate">
+                    {suggestion}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
         ) : null}
       </div>

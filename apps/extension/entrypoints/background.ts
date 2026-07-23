@@ -583,6 +583,25 @@ async function handleExtensionOutcome(
   return `${verb} "${outcome.name}"`;
 }
 
+/**
+ * Apply every extension outcome a turn declared, in order. Normally
+ * that's one — but a merge legitimately carries several (one update for
+ * the survivor plus deletes for the absorbed). Returns the first
+ * outcome's headline; the rest happen quietly (each broadcasts an
+ * EXTENSIONS_CHANGED as it lands).
+ */
+async function applyExtensionOutcomes(
+  outcomes: AgentOutcome[],
+): Promise<string> {
+  let headline = '';
+  for (const outcome of outcomes) {
+    if (outcome.type !== 'extension') continue;
+    const line = await handleExtensionOutcome(outcome);
+    if (!headline) headline = line;
+  }
+  return headline;
+}
+
 /** First line of a reply, sized for a one-line list row / toast. */
 function outcomeSnippet(text: string): string {
   const line = text
@@ -1075,6 +1094,9 @@ async function executeTabRun(run: Run, provider: DeviceAuthProvider, page: PageC
     // and it carries recovery actions (retry, switch provider).
     result = { tier: 'error', text: turn.error };
   } else {
+    // A merge turn declares several extension outcomes — apply them ALL;
+    // the display below keys off the primary (first) outcome.
+    const extensionLine = await applyExtensionOutcomes(turn.outcomes);
     const outcome = turn.outcomes[0];
     if (outcome.type === 'artifact') {
       reportId = await publishArtifact(run, outcome);
@@ -1085,7 +1107,7 @@ async function executeTabRun(run: Run, provider: DeviceAuthProvider, page: PageC
         text: outcome.markdown,
       };
     } else if (outcome.type === 'extension') {
-      taskLine = await handleExtensionOutcome(outcome);
+      taskLine = extensionLine;
       if (outcome.action === 'delete') {
         result = { tier: 'status', text: taskLine };
       } else {
@@ -1129,6 +1151,7 @@ async function executeTabRun(run: Run, provider: DeviceAuthProvider, page: PageC
             : (taskLine ?? result.title ?? outcomeSnippet(result.text)),
         reportId,
         extensionId,
+        suggestions: 'error' in turn ? undefined : turn.suggestions,
       },
       { announce: displaced },
     );
@@ -1180,14 +1203,12 @@ async function executeGlobalRun(
       { announce: true },
     );
   } else {
+    // A merge turn declares several extension outcomes — apply them all.
+    const extensionLine = await applyExtensionOutcomes(turn.outcomes);
     const outcome = turn.outcomes[0];
     const reportId =
       outcome.type === 'artifact'
         ? await publishArtifact(run, outcome)
-        : undefined;
-    const extensionLine =
-      outcome.type === 'extension'
-        ? await handleExtensionOutcome(outcome)
         : undefined;
     await settleTask(
       run.id,
@@ -1204,6 +1225,7 @@ async function executeGlobalRun(
           outcome.type === 'extension' && outcome.action !== 'delete'
             ? outcome.id
             : undefined,
+        suggestions: turn.suggestions,
       },
       { announce: true },
     );
@@ -1440,6 +1462,24 @@ export default defineBackground(() => {
           await activeReportId.setValue(message.reportId);
           await panelFocusItem.setValue({ kind: 'report' });
           await notifyPanel();
+        })();
+      }
+
+      // Task-view actions that land in the SHELL, not the panel: the side
+      // panel sits beside the active tab, so relay to whatever shell is
+      // there. Best-effort — a tab that can't host the shell (chrome://)
+      // just drops it.
+      if (
+        message?.type === MESSAGE.SHELL_REVEAL_EXTENSION ||
+        message?.type === MESSAGE.SHELL_PREFILL
+      ) {
+        return (async () => {
+          const [active] = await browser.tabs.query({
+            active: true,
+            lastFocusedWindow: true,
+          });
+          if (active?.id == null) return;
+          await browser.tabs.sendMessage(active.id, message).catch(() => {});
         })();
       }
 

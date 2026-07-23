@@ -54,6 +54,8 @@ export { WORKSPACE_DIR };
  */
 const PREP_DIRS =
   `${WORKSPACE_DIR} ${WORKSPACE_DIR}/.butler ${ACTIONS_DIR} ` +
+  `${WORKSPACE_DIR}/.butler/context/extensions ` +
+  `${WORKSPACE_DIR}/.butler/context/reports ` +
   `${WORKSPACE_DIR}/skills/page-extension ` +
   `${WORKSPACE_DIR}/skills/browser-control`;
 

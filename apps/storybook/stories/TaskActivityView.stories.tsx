@@ -76,9 +76,60 @@ export const SettledDone: Story = {
           finishedAt: Date.now() - 60_000,
           outcome: 'Comparison ready: HubSpot cheapest to start, Salesforce most complete.',
           reportId: 'report-1',
+          suggestions: [
+            'Draft an email recommending HubSpot to the team',
+            'Add Zoho and Monday to the comparison',
+            'Watch these pricing pages for changes',
+          ],
         }}
         updates={FEED}
         onOpenReport={() => console.log('[storybook] open report')}
+        onUseSuggestion={(text) => console.log('[storybook] suggest:', text)}
+      />
+    </Frame>
+  ),
+};
+
+/** A task whose outputs are BOTH a report and an extension — the report
+    button leads, the extension button seconds it. */
+export const WithBothOutputs: Story = {
+  render: () => (
+    <Frame>
+      <TaskActivityView
+        task={{
+          ...RUNNING,
+          prompt: 'Hide sponsored posts and write up what you removed',
+          status: 'done',
+          finishedAt: Date.now() - 60_000,
+          outcome: 'Installed "Hide sponsored posts"',
+          reportId: 'report-1',
+          extensionId: 'ext-1',
+          suggestions: ['Do the same on LinkedIn'],
+        }}
+        updates={FEED.slice(0, 4)}
+        onOpenReport={() => console.log('[storybook] open report')}
+        onOpenExtension={() => console.log('[storybook] open extension')}
+        onUseSuggestion={(text) => console.log('[storybook] suggest:', text)}
+      />
+    </Frame>
+  ),
+};
+
+/** Extension-only output: its button wears the accent. */
+export const WithExtensionOutput: Story = {
+  render: () => (
+    <Frame>
+      <TaskActivityView
+        task={{
+          ...RUNNING,
+          prompt: 'Always hide the cookie banner on this site',
+          status: 'done',
+          finishedAt: Date.now() - 60_000,
+          outcome: 'Installed "Hide cookie banner"',
+          extensionId: 'ext-1',
+        }}
+        updates={FEED.slice(0, 3)}
+        onOpenExtension={() => console.log('[storybook] open extension')}
       />
     </Frame>
   ),

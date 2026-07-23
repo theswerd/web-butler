@@ -206,7 +206,14 @@ export type AgentOutcome =
 
 /** How an agent turn ended: the declared outcomes, or what went wrong. */
 export type AgentTurnOutcome =
-  | { text: string; stopReason: string; outcomes: AgentOutcome[] }
+  | {
+      text: string;
+      stopReason: string;
+      outcomes: AgentOutcome[];
+      /** Follow-up prompts the agent offered — the task's "suggested
+          next" chips. */
+      suggestions?: string[];
+    }
   | { error: string };
 
 /**
@@ -323,6 +330,7 @@ export async function runAgentPrompt(
         stopReason?: string;
         text?: string;
         outcomes?: AgentOutcome[];
+        suggestions?: string[];
         error?: string;
       };
       try {
@@ -359,6 +367,7 @@ export async function runAgentPrompt(
           outcomes: message.outcomes ?? [
             { type: 'response', markdown: text || 'Done.' },
           ],
+          suggestions: message.suggestions,
         };
       } else if (message.error) outcome = { error: message.error };
     };
