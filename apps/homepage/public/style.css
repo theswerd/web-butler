@@ -210,6 +210,14 @@ main {
 .logo-chatgpt { z-index: 3; }
 .logo-claude { z-index: 2; color: #d97757; } /* Claude's brand terracotta */
 .logo-grok { z-index: 1; }
+
+/* Greeted, the keyring fans out: transforms only, so the headline never
+   reflows — the back chips slide right into the open end of the line. */
+.logo-chip {
+  transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.hero-logos:hover .logo-claude { transform: translateX(0.3em); }
+.hero-logos:hover .logo-grok { transform: translateX(0.6em); }
 .logo-chip svg {
   width: 0.52em;
   height: 0.52em;
