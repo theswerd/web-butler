@@ -62,10 +62,11 @@ function StatusMark({ task }: { task: Task }) {
 
 /**
  * The live task indicator that docks with the prompt, in every tab. Each
- * task is a compact pill that hugs its content — pills wrap into rows
- * instead of each claiming the shell's full width — showing the task's
- * status, its prompt, and (while running) the newest line of its activity
- * feed, capped so no pill sprawls.
+ * task is a fixed-size pill (264px: two per row in the 560px shell, with
+ * the minimize control alongside) showing the task's status, its prompt,
+ * and (while running) the newest line of its activity feed. The size
+ * never follows the content — text truncates inside it — so pills don't
+ * shift as activity streams in or on hover.
  *
  * A pill's body is a click target that REFERENCES the task, the same
  * gesture as referencing a page element: the next message sent goes onto
@@ -173,7 +174,7 @@ export function TaskStrip({
                 event.preventDefault();
                 onSelect(task);
               }}
-              className={`webbutler:group webbutler:flex webbutler:max-w-full webbutler:cursor-pointer webbutler:select-none webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:border webbutler:py-0.5 webbutler:pr-0.5 webbutler:pl-2 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-[background-color,border-color,box-shadow] webbutler:duration-100 ${
+              className={`webbutler:group webbutler:flex webbutler:w-[264px] webbutler:max-w-full webbutler:cursor-pointer webbutler:select-none webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:border webbutler:py-0.5 webbutler:pr-0.5 webbutler:pl-2 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-[background-color,border-color,box-shadow] webbutler:duration-100 ${
                 selected
                   ? 'webbutler:border-[var(--wc-selection)] webbutler:bg-[var(--wc-surface)] webbutler:shadow-[0_0_0_0.5px_var(--wc-selection)]'
                   : 'webbutler:border-[var(--wc-border)] webbutler:bg-[var(--wc-surface)] webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:bg-[var(--wc-hover-1)]'
@@ -181,7 +182,10 @@ export function TaskStrip({
             >
               <StatusMark task={task} />
 
-              <span className="webbutler:max-w-[140px] webbutler:shrink-0 webbutler:truncate webbutler:text-[11px] webbutler:leading-4 webbutler:font-medium webbutler:text-[var(--wc-ink)]">
+              <span
+                title={task.prompt}
+                className="webbutler:max-w-[120px] webbutler:shrink-0 webbutler:truncate webbutler:text-[11px] webbutler:leading-4 webbutler:font-medium webbutler:text-[var(--wc-ink)]"
+              >
                 {task.prompt}
               </span>
 
@@ -189,7 +193,7 @@ export function TaskStrip({
                   flicker. title carries the full text the cap hides. */}
               <span
                 title={detail}
-                className={`webbutler:max-w-[170px] webbutler:truncate webbutler:text-[10px] ${
+                className={`webbutler:min-w-0 webbutler:flex-1 webbutler:truncate webbutler:text-[10px] ${
                   selected
                     ? 'webbutler:text-[var(--wc-selection)]'
                     : isRunning
