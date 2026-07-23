@@ -137,6 +137,9 @@ export function Demo() {
   // The one live piece of the shell: hovering the p.policy chip glows the
   // picked box on the page, exactly like the extension does.
   const [chipGlow, setChipGlow] = useState(false);
+  // The alteration card's dial: flip it off and the sponsored posts come
+  // back, flip it on and they fold away again — the real card's behavior.
+  const [editEnabled, setEditEnabled] = useState(true);
 
   const mountRef = useRef<HTMLDivElement | null>(null);
   const timersRef = useRef<number[]>([]);
@@ -166,6 +169,8 @@ export function Demo() {
     setFormStep(0);
     // The chip unmounts with its scene, so mouseleave never fires.
     setChipGlow(false);
+    // Fresh installs land enabled, every showing.
+    setEditEnabled(true);
     if (staticRef.current) {
       // Frozen theaters rest on the delivered state; for the report that
       // includes the served side panel.
@@ -359,14 +364,14 @@ export function Demo() {
     if (!win) return;
     win.dataset.state = !open
       ? 'idle'
-      : phase === 'done' && scene.id === 'edit'
+      : phase === 'done' && scene.id === 'edit' && editEnabled
         ? 'done'
         : 'open';
     win.dataset.panel =
       phase === 'panel' && scene.id === 'report' ? 'open' : 'closed';
     const addr = win.querySelector('.addr');
     if (addr) addr.textContent = scene.addr;
-  }, [open, phase, scene]);
+  }, [open, phase, scene, editEnabled]);
 
   const selectScene = (index: number) => {
     setOpen(true);
@@ -482,8 +487,10 @@ export function Demo() {
                           exit={{ opacity: 0, scale: 0.98 }}
                           transition={SPRING_UI}
                           style={{ width: '100%' }}
-                          aria-hidden="true"
-                          inert
+                          // The alteration card stays live: its on/off dial
+                          // really works. The other results are scenery.
+                          aria-hidden={scene.id === 'edit' ? undefined : 'true'}
+                          inert={scene.id === 'edit' ? undefined : true}
                         >
                           {scene.id === 'ask' ? (
                             <AnswerCard
@@ -499,8 +506,14 @@ export function Demo() {
                               description="Hides sponsored posts in this feed, on every visit."
                               urlPatterns={['https://your-feed.example/*']}
                               scriptingAllowed
-                              extensionEnabled
-                              onExtensionToggle={noop}
+                              extensionEnabled={editEnabled}
+                              onExtensionToggle={(on) => {
+                                setEditEnabled(on);
+                                // Playing with the dial takes the controls:
+                                // the carousel holds this scene, like a tab
+                                // click does, instead of whisking it away.
+                                manualRef.current = true;
+                              }}
                             />
                           ) : scene.id === 'form' ? (
                             <AnswerCard
