@@ -60,6 +60,10 @@ export const List: Story = {
       <ArtifactsView
         artifacts={SAMPLE_ARTIFACTS}
         onOpen={(artifact) => console.log('[storybook] open:', artifact.title)}
+        onRemove={(artifact) =>
+          console.log('[storybook] remove:', artifact.title)
+        }
+        onClear={() => console.log('[storybook] clear all')}
       />
     </Frame>
   ),

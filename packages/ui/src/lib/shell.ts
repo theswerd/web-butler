@@ -322,6 +322,10 @@ export const MESSAGE = {
   // Artifact list: content ↔ background.
   /** Fetch all artifacts of the session (menu Artifacts view). */
   REPORTS_GET: 'web-butler/reports-get',
+  /** Trash one artifact (local cache + server row). */
+  REPORTS_DELETE: 'web-butler/reports-delete',
+  /** Trash every artifact. */
+  REPORTS_CLEAR: 'web-butler/reports-clear',
   /** The artifact list changed — broadcast so open menus stay current. */
   REPORTS_CHANGED: 'web-butler/reports-changed',
   // Provider onboarding: content → background → server → sandbox VM.
@@ -426,6 +430,8 @@ export type WebButlerMessage =
   | { type: typeof MESSAGE.PANEL_CHANGED; state: PanelState }
   | { type: typeof MESSAGE.PANEL_FOCUS_REPORT; reportId: string }
   | { type: typeof MESSAGE.REPORTS_GET }
+  | { type: typeof MESSAGE.REPORTS_DELETE; id: string }
+  | { type: typeof MESSAGE.REPORTS_CLEAR }
   | { type: typeof MESSAGE.REPORTS_CHANGED; reports: Report[] }
   | { type: typeof MESSAGE.CODEX_LOGIN_START }
   | { type: typeof MESSAGE.CODEX_STATUS_GET }

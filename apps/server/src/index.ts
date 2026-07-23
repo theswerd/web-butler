@@ -867,6 +867,67 @@ app.post(
   },
 );
 
+app.delete(
+  '/api/reports/all',
+  describeRoute({
+    description: "Delete every one of the user's reports",
+    responses: {
+      200: {
+        description: 'Deleted',
+        content: {
+          'application/json': {
+            schema: resolver(z.object({ ok: z.boolean() })),
+          },
+        },
+      },
+      401: {
+        description: 'No valid session',
+        content: { 'application/json': { schema: resolver(errorSchema) } },
+      },
+    },
+  }),
+  async (c) => {
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    if (!session) return c.json({ error: 'Unauthorized' }, 401);
+    await db.delete(report).where(eq(report.userId, session.user.id));
+    return c.json({ ok: true });
+  },
+);
+
+app.delete(
+  '/api/reports/:id',
+  describeRoute({
+    description: 'Delete one report',
+    responses: {
+      200: {
+        description: 'Deleted (idempotent: also for ids already gone)',
+        content: {
+          'application/json': {
+            schema: resolver(z.object({ ok: z.boolean() })),
+          },
+        },
+      },
+      401: {
+        description: 'No valid session',
+        content: { 'application/json': { schema: resolver(errorSchema) } },
+      },
+    },
+  }),
+  async (c) => {
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    if (!session) return c.json({ error: 'Unauthorized' }, 401);
+    await db
+      .delete(report)
+      .where(
+        and(
+          eq(report.id, c.req.param('id')),
+          eq(report.userId, session.user.id),
+        ),
+      );
+    return c.json({ ok: true });
+  },
+);
+
 // ---------------------------------------------------------------------------
 // Site extensions: persistent page modifications authored by the agent
 // (`extension` outcomes, stored by the prompt route below). The browser

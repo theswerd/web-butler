@@ -29,8 +29,10 @@ import {
 import type { Settings } from '@web-butler/ui';
 import { findAnswerFixture } from '@web-butler/ui/fixtures';
 import {
+  clearReportsRemote,
   clearTasksRemote,
   deleteExtension,
+  deleteReportRemote,
   deleteTaskRemote,
   ensureInitialized,
   fetchExtensions,
@@ -620,6 +622,24 @@ async function publishReport(report: Report) {
   await panelFocusItem.setValue({ kind: 'report' });
   await notifyPanel();
   await broadcast({ type: MESSAGE.REPORTS_CHANGED, reports });
+}
+
+/**
+ * User-initiated artifact trashing (one row or all): keep what the
+ * predicate passes, tell every tab, and refresh a side panel that was
+ * showing a now-gone report (activeReport falls back to the newest, or
+ * empty). The caller deletes the server rows separately.
+ */
+async function removeReports(keep: (report: Report) => boolean) {
+  const reports = (await reportsItem.getValue()).filter(keep);
+  await reportsItem.setValue(reports);
+  const activeId = await activeReportId.getValue();
+  if (activeId && !reports.some((report) => report.id === activeId)) {
+    await activeReportId.setValue(null);
+  }
+  await broadcast({ type: MESSAGE.REPORTS_CHANGED, reports });
+  const focus = await panelFocusItem.getValue();
+  if (focus.kind === 'report') void notifyPanel();
 }
 
 /**
@@ -1463,6 +1483,16 @@ export default defineBackground(() => {
 
       if (message?.type === MESSAGE.REPORTS_GET) {
         return reportsItem.getValue();
+      }
+
+      if (message?.type === MESSAGE.REPORTS_DELETE) {
+        return removeReports(
+          (report) => report.id !== message.id,
+        ).then(() => deleteReportRemote(message.id));
+      }
+
+      if (message?.type === MESSAGE.REPORTS_CLEAR) {
+        return removeReports(() => false).then(() => clearReportsRemote());
       }
 
       if (message?.type === MESSAGE.SHELL_GET) {

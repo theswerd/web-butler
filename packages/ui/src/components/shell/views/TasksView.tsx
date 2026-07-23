@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   HiArrowPath,
   HiDocumentText,
@@ -6,7 +7,7 @@ import {
   HiOutlineTrash,
 } from "react-icons/hi2";
 import type { Task } from "../../../lib/shell";
-import { ViewHeader } from "./ViewHeader";
+import { HeaderSearch, ViewHeader } from "./ViewHeader";
 
 /** "just now", "4m", "2h", "3d" — compact, list-friendly. */
 export function timeAgo(timestamp: number, now = Date.now()): string {
@@ -101,6 +102,8 @@ export function TasksView({
   onRemove,
   onClear,
 }: TasksViewProps) {
+  const [query, setQuery] = useState("");
+
   if (tasks.length === 0) {
     return (
       <div className="webbutler:flex webbutler:h-full webbutler:flex-col">
@@ -120,8 +123,19 @@ export function TasksView({
     );
   }
 
-  const running = tasks.filter((task) => task.status === "running");
-  const settled = tasks.filter((task) => task.status !== "running");
+  // Search filters by what you asked, what came back, and where.
+  const needle = query.trim().toLowerCase();
+  const shown = needle
+    ? tasks.filter((task) =>
+        [task.prompt, task.outcome ?? "", task.url]
+          .join("\n")
+          .toLowerCase()
+          .includes(needle),
+      )
+    : tasks;
+
+  const running = shown.filter((task) => task.status === "running");
+  const settled = shown.filter((task) => task.status !== "running");
 
   const row = (task: Task) => {
     // The row's main click always opens the task itself — its transcript
@@ -275,6 +289,7 @@ export function TasksView({
       <ViewHeader
         label={running.length > 0 ? `${running.length} running` : "Tasks"}
       >
+        <HeaderSearch value={query} onChange={setQuery} />
         {onClear && settled.length > 0 ? (
           <button
             type="button"
@@ -295,6 +310,11 @@ export function TasksView({
         ) : null}
       </ViewHeader>
       <div className="webbutler:min-h-0 webbutler:flex-1 webbutler:overflow-y-auto webbutler:pb-1.5 webbutler:pt-0.5">
+        {shown.length === 0 ? (
+          <p className="webbutler:px-3 webbutler:py-4 webbutler:text-center webbutler:text-[11px] webbutler:text-[var(--wc-text-3)]">
+            Nothing matches "{query.trim()}".
+          </p>
+        ) : null}
         {running.map(row)}
         {/* A quiet seam between what's moving and what's history. */}
         {running.length > 0 && settled.length > 0 ? (

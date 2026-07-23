@@ -119,7 +119,7 @@ export function App() {
     clearTasks,
   } = useTasks();
   // Global: every artifact of the session, for the menu's Artifacts view.
-  const artifacts = useArtifacts();
+  const { artifacts, removeArtifact, clearArtifacts } = useArtifacts();
   // Global: the user's site extensions, for the menu's Extensions view.
   const {
     state: extensionsState,
@@ -931,6 +931,10 @@ export function App() {
                         onOpenArtifact={(artifact) =>
                           openSidePanel(artifact.id)
                         }
+                        onArtifactRemove={(artifact) =>
+                          removeArtifact(artifact.id)
+                        }
+                        onArtifactsClear={clearArtifacts}
                         extensionsState={extensionsState}
                         onExtensionToggle={toggleExtension}
                         onExtensionDelete={removeExtension}

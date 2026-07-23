@@ -84,7 +84,7 @@ export function TaskStrip({
                 event.preventDefault();
                 onSelect(task);
               }}
-              className={`webbutler:group webbutler:flex webbutler:w-full webbutler:cursor-pointer webbutler:select-none webbutler:items-center webbutler:gap-2 webbutler:rounded-full webbutler:border webbutler:py-1 webbutler:pr-1 webbutler:pl-2.5 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-[background-color,border-color,box-shadow] webbutler:duration-100 ${
+              className={`webbutler:group webbutler:flex webbutler:w-full webbutler:cursor-pointer webbutler:select-none webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:border webbutler:py-0.5 webbutler:pr-0.5 webbutler:pl-2 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-[background-color,border-color,box-shadow] webbutler:duration-100 ${
                 selected
                   ? 'webbutler:border-[var(--wc-selection)] webbutler:bg-[var(--wc-surface)] webbutler:shadow-[0_0_0_0.5px_var(--wc-selection)]'
                   : 'webbutler:border-[var(--wc-border)] webbutler:bg-[var(--wc-surface)] webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:bg-[var(--wc-hover-1)]'
@@ -110,7 +110,7 @@ export function TaskStrip({
                 />
               </span>
 
-              <span className="webbutler:max-w-[38%] webbutler:shrink-0 webbutler:truncate webbutler:text-[12px] webbutler:font-medium webbutler:text-[var(--wc-ink)]">
+              <span className="webbutler:max-w-[38%] webbutler:shrink-0 webbutler:truncate webbutler:text-[11px] webbutler:leading-4 webbutler:font-medium webbutler:text-[var(--wc-ink)]">
                 {task.prompt}
               </span>
 
@@ -120,7 +120,7 @@ export function TaskStrip({
                   Swaps drift up a few px so changes read as motion, not
                   flicker. */}
               <span
-                className={`webbutler:min-w-0 webbutler:flex-1 webbutler:truncate webbutler:text-[11px] ${
+                className={`webbutler:min-w-0 webbutler:flex-1 webbutler:truncate webbutler:text-[10px] ${
                   selected
                     ? 'webbutler:text-[var(--wc-selection)]'
                     : running
@@ -160,9 +160,9 @@ export function TaskStrip({
                   event.stopPropagation();
                   onOpen(task);
                 }}
-                className="webbutler:flex webbutler:size-5 webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:justify-center webbutler:rounded-full webbutler:text-[var(--wc-text-3)] webbutler:opacity-0 webbutler:transition-all webbutler:duration-100 webbutler:group-hover:opacity-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[var(--wc-ink)] webbutler:focus-visible:opacity-100"
+                className="webbutler:flex webbutler:size-4 webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:justify-center webbutler:rounded-full webbutler:text-[var(--wc-text-3)] webbutler:opacity-0 webbutler:transition-all webbutler:duration-100 webbutler:group-hover:opacity-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[var(--wc-ink)] webbutler:focus-visible:opacity-100"
               >
-                <HiOutlineDocumentText size={12} aria-hidden />
+                <HiOutlineDocumentText size={11} aria-hidden />
               </button>
 
               {running ? (
@@ -173,9 +173,9 @@ export function TaskStrip({
                     event.stopPropagation();
                     onCancel(task);
                   }}
-                  className="webbutler:flex webbutler:size-5 webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:justify-center webbutler:rounded-full webbutler:text-[var(--wc-text-3)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[#e5484d]"
+                  className="webbutler:flex webbutler:size-4 webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:justify-center webbutler:rounded-full webbutler:text-[var(--wc-text-3)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[#e5484d]"
                 >
-                  <HiMiniStop size={11} aria-hidden />
+                  <HiMiniStop size={10} aria-hidden />
                 </button>
               ) : (
                 <button
@@ -185,9 +185,9 @@ export function TaskStrip({
                     event.stopPropagation();
                     onDismiss(task);
                   }}
-                  className="webbutler:flex webbutler:size-5 webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:justify-center webbutler:rounded-full webbutler:text-[var(--wc-text-3)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[var(--wc-ink)]"
+                  className="webbutler:flex webbutler:size-4 webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:justify-center webbutler:rounded-full webbutler:text-[var(--wc-text-3)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[var(--wc-ink)]"
                 >
-                  <HiXMark size={12} aria-hidden />
+                  <HiXMark size={11} aria-hidden />
                 </button>
               )}
             </motion.div>

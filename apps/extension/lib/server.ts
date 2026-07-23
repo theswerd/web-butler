@@ -463,6 +463,22 @@ export async function syncReport(report: Report): Promise<void> {
   }
 }
 
+export async function deleteReportRemote(id: string): Promise<void> {
+  try {
+    await authedFetch(`/api/reports/${id}`, { method: 'DELETE' });
+  } catch {
+    // Offline — the row resurfaces on the next hydrate; delete again then.
+  }
+}
+
+export async function clearReportsRemote(): Promise<void> {
+  try {
+    await authedFetch('/api/reports/all', { method: 'DELETE' });
+  } catch {
+    // Same offline story as deleteReportRemote.
+  }
+}
+
 export async function deleteTaskRemote(id: string): Promise<void> {
   try {
     await authedFetch(`/api/tasks/${id}`, { method: 'DELETE' });

@@ -81,6 +81,10 @@ type MenuPanelProps = {
   artifacts?: Report[];
   /** An artifact row was clicked — the shell opens it in the side panel. */
   onOpenArtifact?: (artifact: Report) => void;
+  /** Trash one artifact row. */
+  onArtifactRemove?: (artifact: Report) => void;
+  /** Trash every artifact. */
+  onArtifactsClear?: () => void;
   /** Site extensions + injection availability for the Extensions view. */
   extensionsState?: ExtensionsState;
   /** A site extension's switch was flipped. */
@@ -144,6 +148,8 @@ export function MenuPanel({
   onTasksClear,
   artifacts = [],
   onOpenArtifact,
+  onArtifactRemove,
+  onArtifactsClear,
   extensionsState = { extensions: [], userScriptsAvailable: true },
   onExtensionToggle,
   onExtensionDelete,
@@ -416,7 +422,12 @@ export function MenuPanel({
             }}
           />
         ) : active === 'artifacts' ? (
-          <ArtifactsView artifacts={artifacts} onOpen={onOpenArtifact} />
+          <ArtifactsView
+            artifacts={artifacts}
+            onOpen={onOpenArtifact}
+            onRemove={onArtifactRemove}
+            onClear={onArtifactsClear}
+          />
         ) : active === 'extensions' ? (
           <ExtensionsView
             state={extensionsState}

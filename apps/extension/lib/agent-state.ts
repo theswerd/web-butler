@@ -306,8 +306,13 @@ export function useRepairAsk(): {
 /**
  * The session's artifacts (reports, drafts…), newest first — global state
  * like tasks: identical in every tab, refreshed by background broadcast.
+ * Remove/clear are optimistic, like the task list's.
  */
-export function useArtifacts(): Report[] {
+export function useArtifacts(): {
+  artifacts: Report[];
+  removeArtifact: (id: string) => void;
+  clearArtifacts: () => void;
+} {
   const [artifacts, setArtifacts] = useState<Report[]>([]);
 
   useEffect(() => {
@@ -331,5 +336,19 @@ export function useArtifacts(): Report[] {
     };
   }, []);
 
-  return artifacts;
+  const removeArtifact = useCallback((id: string) => {
+    setArtifacts((current) => current.filter((report) => report.id !== id));
+    void browser.runtime
+      .sendMessage({ type: MESSAGE.REPORTS_DELETE, id })
+      .catch(() => {});
+  }, []);
+
+  const clearArtifacts = useCallback(() => {
+    setArtifacts([]);
+    void browser.runtime
+      .sendMessage({ type: MESSAGE.REPORTS_CLEAR })
+      .catch(() => {});
+  }, []);
+
+  return { artifacts, removeArtifact, clearArtifacts };
 }
