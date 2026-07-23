@@ -2,6 +2,7 @@ import {
   AnswerCard,
   CollapsedPill,
   ContextChips,
+  ElementHighlight,
   GhostCursor,
   INITIAL_GHOST_CURSOR,
   PlusButton,
@@ -48,13 +49,16 @@ const ACCENT = '#3b82f6';
 const NO_MISSING: ReadonlySet<string> = new Set();
 const noop = () => {};
 
-/** The element "picked" in the answering scene, worn as a context chip. */
+/**
+ * The element "picked" in the answering scene, worn as a context chip.
+ * The selector resolves to the demo page's own skeleton box, so the real
+ * ElementHighlight can find it and glow on chip hover.
+ */
 const ASK_CHIP: PickedElement = {
   id: 'ask-chip',
-  selector: 'main section.policy > p:nth-of-type(2)',
+  selector: '.article .picked',
   label: 'p.policy',
-  tag: 'p',
-  text: 'Cancellation and refunds',
+  tag: 'div',
   html: '',
 };
 
@@ -131,6 +135,9 @@ export function Demo() {
   const [typed, setTyped] = useState('');
   const [cursor, setCursor] = useState<GhostCursorState>(INITIAL_GHOST_CURSOR);
   const [formStep, setFormStep] = useState(0);
+  // The one live piece of the shell: hovering the p.policy chip glows the
+  // picked box on the page, exactly like the extension does.
+  const [chipGlow, setChipGlow] = useState(false);
 
   const mountRef = useRef<HTMLDivElement | null>(null);
   const timersRef = useRef<number[]>([]);
@@ -158,6 +165,8 @@ export function Demo() {
     setTyped('');
     setCursor(INITIAL_GHOST_CURSOR);
     setFormStep(0);
+    // The chip unmounts with its scene, so mouseleave never fires.
+    setChipGlow(false);
     if (staticRef.current) {
       // Frozen theaters rest on the delivered state; for the report that
       // includes the served side panel.
@@ -430,9 +439,10 @@ export function Demo() {
         ) : null}
       </AnimatePresence>
 
-      {/* The butler, docked like the real thing — and inert: real
-          components, scripted hands. */}
-      <div className="butler" aria-hidden="true" inert>
+      {/* The butler, docked like the real thing. The scripted pieces (cards,
+          prompt, pill) are individually inert; the context chip row stays
+          live so hovering it glows the picked box, like the real shell. */}
+      <div className="butler">
         <web-butler style={{ display: 'block' }}>
           <div
             id="web-butler-root"
@@ -473,6 +483,8 @@ export function Demo() {
                           exit={{ opacity: 0, scale: 0.98 }}
                           transition={SPRING_UI}
                           style={{ width: '100%' }}
+                          aria-hidden="true"
+                          inert
                         >
                           {scene.id === 'ask' ? (
                             <AnswerCard
@@ -512,20 +524,28 @@ export function Demo() {
                     </AnimatePresence>
 
                     {/* The answering scene points at the page: a picked
-                        element, worn as a chip. */}
+                        element, worn as a chip. Hover it and the box on the
+                        page glows; click it and the page shows you where. */}
                     {scene.id === 'ask' ? (
                       <div style={{ width: '100%' }}>
                         <ContextChips
                           elements={[ASK_CHIP]}
                           missingIds={NO_MISSING}
                           onRemove={noop}
-                          onHover={noop}
-                          onJump={noop}
+                          onHover={(element) => setChipGlow(element != null)}
+                          onJump={() =>
+                            document
+                              .querySelector('.article .picked')
+                              ?.scrollIntoView({
+                                behavior: 'smooth',
+                                block: 'center',
+                              })
+                          }
                         />
                       </div>
                     ) : null}
 
-                    <div style={{ width: '100%' }}>
+                    <div style={{ width: '100%' }} aria-hidden="true" inert>
                       <PromptPanel
                         leading={
                           <PlusButton
@@ -549,6 +569,8 @@ export function Demo() {
                     animate="visible"
                     exit="hidden"
                     style={{ transformOrigin: 'bottom center' }}
+                    aria-hidden="true"
+                    inert
                   >
                     <CollapsedPill onOpen={noop} />
                   </motion.div>
@@ -565,6 +587,28 @@ export function Demo() {
           keeps the cursor's viewport coordinates honest, like the extension. */}
       {createPortal(
         <GhostCursor state={cursor} accentColor={ACCENT} />,
+        document.body,
+      )}
+
+      {/* The chip-hover glow: the extension's own ElementHighlight, riding
+          the picked box. Same containing-block story as the cursor. */}
+      {createPortal(
+        <web-butler>
+          <div
+            id="web-butler-root"
+            style={{ '--wc-selection': ACCENT } as CSSProperties}
+          >
+            <AnimatePresence>
+              {open && scene.id === 'ask' && chipGlow ? (
+                <ElementHighlight
+                  element={ASK_CHIP}
+                  accentColor={ACCENT}
+                  emphasis
+                />
+              ) : null}
+            </AnimatePresence>
+          </div>
+        </web-butler>,
         document.body,
       )}
 
