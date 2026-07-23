@@ -570,6 +570,15 @@ export function Demo() {
                   onClick={() => selectScene(index)}
                 >
                   {s.tab}
+                  {/* One shared underline slides between tabs instead of
+                      each tab switching its own border on. */}
+                  {index === sceneIndex ? (
+                    <motion.span
+                      layoutId="demo-tab-line"
+                      className="tab-line"
+                      transition={SPRING_UI}
+                    />
+                  ) : null}
                 </button>
               ))}
             </div>,

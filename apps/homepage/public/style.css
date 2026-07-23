@@ -480,8 +480,8 @@ main {
   appearance: none;
   background: none;
   border: 0;
-  border-bottom: 1px solid transparent;
-  padding: 3px 1px;
+  position: relative; /* anchors the sliding .tab-line */
+  padding: 3px 1px 4px;
   cursor: pointer;
   font-family: var(--sans);
   font-size: 11px;
@@ -489,10 +489,21 @@ main {
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--mist);
-  transition: color 120ms, border-color 120ms;
+  transition: color 120ms;
 }
 .demo-tabs button:hover { color: var(--text-2); }
-.demo-tabs button.on { color: var(--ink); border-color: var(--ink); }
+.demo-tabs button.on { color: var(--ink); }
+
+/* The selection line: one element, shared across tabs via layoutId, so it
+   slides to the active tab instead of blinking on and off. */
+.tab-line {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  bottom: 0;
+  height: 1px;
+  background: var(--ink);
+}
 
 /* ---------------------------------------------------------------------
    Small screens
