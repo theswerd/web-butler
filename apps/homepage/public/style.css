@@ -478,23 +478,11 @@ main {
 
 /* Scenario tabs, set in the eyebrow voice. */
 .demo-tabs {
-  position: relative; /* anchors the replay control at the right edge */
   display: flex;
   justify-content: center;
   gap: 26px;
   margin-top: 20px;
 }
-
-/* Replay sits off to the right so the scenario tabs stay centered. */
-.demo-tabs .replay {
-  position: absolute;
-  right: 0;
-  top: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-.demo-tabs .replay svg { display: block; }
 .demo-tabs button {
   appearance: none;
   background: none;

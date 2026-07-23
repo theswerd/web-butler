@@ -645,30 +645,6 @@ export function Demo() {
                   ) : null}
                 </button>
               ))}
-              {/* Run the current errand again from the top. */}
-              {!reduced ? (
-                <button
-                  type="button"
-                  className="replay"
-                  onClick={() => selectScene(sceneIndex)}
-                >
-                  <svg
-                    width="11"
-                    height="11"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.4"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M3 12a9 9 0 1 0 2.8-6.5" />
-                    <path d="M3 4v5h5" />
-                  </svg>
-                  Replay
-                </button>
-              ) : null}
             </div>,
             tabsHost,
           )
