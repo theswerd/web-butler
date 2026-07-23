@@ -143,8 +143,8 @@ main {
 }
 
 .hero {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 380px;
+  min-width: 320px;
   text-align: left;
 }
 
@@ -175,7 +175,7 @@ main {
 .hero h1 {
   font-family: var(--serif);
   font-weight: 500;
-  font-size: clamp(32px, 3.3vw, 42px);
+  font-size: clamp(30px, 3vw, 42px);
   line-height: 1.16;
   letter-spacing: -0.015em;
   margin: 0 0 16px;
@@ -266,22 +266,32 @@ main {
    The demo — a faux page with the real pill working one errand.
 --------------------------------------------------------------------- */
 
+/* The demo gives ground before the text does: it can shrink to 440px
+   so two columns survive on ordinary desktop windows, not just wide ones. */
 .demo {
-  flex-shrink: 0;
-  width: min(660px, 100%);
+  flex: 0 1 660px;
+  min-width: 440px;
+  max-width: 660px;
+}
+
+/* Mid-width desktops: the left column is lean, so the headline steps
+   down a size to keep its two-line shape beside the demo. */
+@media (max-width: 1150px) and (min-width: 901px) {
+  .hero h1 { font-size: clamp(25px, 2.7vw, 34px); }
+  .lede { font-size: 15px; }
 }
 
 /* Narrow: the claim stacks back on top of the proof, centered. */
-@media (max-width: 1080px) {
+@media (max-width: 900px) {
   .hero-row {
     flex-direction: column;
     gap: 28px;
     padding: 32px 0 64px;
   }
-  .hero { text-align: center; }
+  .hero { min-width: 0; text-align: center; }
   .lede { margin: 0 auto; }
   .cta-row { justify-content: center; }
-  .demo { width: 100%; max-width: 660px; }
+  .demo { width: 100%; max-width: 660px; min-width: 0; }
 }
 
 .window {
