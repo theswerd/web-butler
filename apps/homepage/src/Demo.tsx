@@ -2,10 +2,15 @@ import {
   AnswerCard,
   CollapsedPill,
   ContextChips,
+  GhostCursor,
+  INITIAL_GHOST_CURSOR,
   PlusButton,
   PromptPanel,
+  ReportView,
   shellVariants,
+  SPRING_SHEET,
   SPRING_UI,
+  type GhostCursorState,
   type PickedElement,
 } from '@web-butler/ui';
 import { AnimatePresence, motion } from 'motion/react';
@@ -86,14 +91,38 @@ const ASK_ANSWER =
   'after you cancel. Download your archive first: Settings, then Data, ' +
   'then Export.';
 
-/** idle (pill) → per-scene: typing → working → done → next scene … */
-type Phase = 'typing' | 'working' | 'done';
+/** The report itself, delivered into the demo's side panel. */
+const REPORT_MD = `Three tiers on plans.example, read side by side.
+
+|  | Basic | Pro | Team |
+| --- | --- | --- | --- |
+| Price | $0 | $12/mo | $29/seat |
+| Projects | 3 | Unlimited | Unlimited |
+| History | 7 days | 90 days | 1 year |
+| SSO | · | · | Yes |
+
+**The fine print**
+
+- Pro renews at $24/mo after year one. The banner price is introductory.
+- Team bills annually, three seats minimum.
+- Export works on every tier, so switching later is cheap.
+
+**The call:** start on Basic, move to Pro when you hit the project cap.`;
+
+/**
+ * idle (pill) → per-scene: typing → working → done → next scene …
+ * The report scene keeps going: done → point (the butler's cursor rides
+ * to the Open button and clicks) → panel (the side panel serves the
+ * report) → next scene.
+ */
+type Phase = 'typing' | 'working' | 'done' | 'point' | 'panel';
 
 export function Demo() {
   const [open, setOpen] = useState(false);
   const [sceneIndex, setSceneIndex] = useState(0);
   const [phase, setPhase] = useState<Phase>('typing');
   const [typed, setTyped] = useState('');
+  const [cursor, setCursor] = useState<GhostCursorState>(INITIAL_GHOST_CURSOR);
 
   const mountRef = useRef<HTMLDivElement | null>(null);
   const timersRef = useRef<number[]>([]);
@@ -113,12 +142,16 @@ export function Demo() {
     clearTimers();
     setSceneIndex(index);
     setTyped('');
+    setCursor(INITIAL_GHOST_CURSOR);
     if (staticRef.current) {
-      setPhase('done');
+      // Frozen theaters rest on the delivered state; for the report that
+      // includes the served side panel.
+      setPhase(SCENARIOS[index].id === 'report' ? 'panel' : 'done');
       return;
     }
     setPhase('typing');
     const prompt = SCENARIOS[index].prompt;
+    const advance = () => startScene((index + 1) % SCENARIOS.length);
     let i = 0;
     const typeNext = () => {
       i += 1;
@@ -131,12 +164,58 @@ export function Demo() {
           setPhase('working');
           later(3200, () => {
             setPhase('done');
-            later(5200, () => startScene((index + 1) % SCENARIOS.length));
+            if (SCENARIOS[index].id === 'report') {
+              later(1000, () => pointAndServe(advance));
+            } else {
+              later(5200, advance);
+            }
           });
         });
       }
     };
     later(600, typeNext);
+  };
+
+  /**
+   * The report scene's second act: the butler's own GhostCursor rides to
+   * the artifact card's Open button, clicks it, and the side panel slides
+   * in with the report. Coordinates are viewport pixels, exactly like the
+   * real cursor gets from the debugger.
+   */
+  const pointAndServe = (advance: () => void) => {
+    const win = mountRef.current?.closest<HTMLElement>('.window');
+    const stage = win?.querySelector('.stage');
+    const openBtn = win
+      ? Array.from(win.querySelectorAll('button')).find((b) =>
+          (b.textContent ?? '').trim().startsWith('Open'),
+        )
+      : undefined;
+    if (!win || !stage || !openBtn) {
+      // Nothing to point at (mid-resize, odd layout): skip the flourish.
+      later(4200, advance);
+      return;
+    }
+    setPhase('point');
+    const target = openBtn.getBoundingClientRect();
+    const from = stage.getBoundingClientRect();
+    setCursor({
+      x: from.left + from.width * 0.42,
+      y: from.top + from.height * 0.55,
+      visible: true,
+      pressCount: 0,
+    });
+    later(140, () =>
+      setCursor((c) => ({
+        ...c,
+        x: target.left + target.width / 2 - 3,
+        y: target.top + target.height / 2 - 2,
+        label: 'Open report',
+      })),
+    );
+    later(780, () => setCursor((c) => ({ ...c, pressCount: 1, label: undefined })));
+    later(1040, () => setPhase('panel'));
+    later(1700, () => setCursor((c) => ({ ...c, visible: false })));
+    later(7600, advance);
   };
 
   useEffect(() => {
@@ -148,7 +227,7 @@ export function Demo() {
       staticRef.current = true;
       setOpen(true);
       setSceneIndex(forcedIndex);
-      setPhase('done');
+      setPhase(SCENARIOS[forcedIndex].id === 'report' ? 'panel' : 'done');
       return;
     }
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -183,7 +262,8 @@ export function Demo() {
   const scene = SCENARIOS[sceneIndex];
 
   // The window frame reacts through plain DOM: data-state drives the
-  // sponsored-post fold CSS, the address bar reads the scene's site.
+  // sponsored-post fold CSS, data-panel squeezes the page for the side
+  // panel (the way real Chrome does), the address bar reads the scene.
   useEffect(() => {
     const win = mountRef.current?.closest<HTMLElement>('.window');
     if (!win) return;
@@ -192,6 +272,8 @@ export function Demo() {
       : phase === 'done' && scene.id === 'edit'
         ? 'done'
         : 'open';
+    win.dataset.panel =
+      phase === 'panel' && scene.id === 'report' ? 'open' : 'closed';
     const addr = win.querySelector('.addr');
     if (addr) addr.textContent = scene.addr;
   }, [open, phase, scene]);
@@ -224,6 +306,38 @@ export function Demo() {
             <PlansStage />
           )}
         </motion.div>
+      </AnimatePresence>
+
+      {/* The side panel, serving the report the cursor just ordered.
+          Slides over the stage's right edge while the page squeezes,
+          the way Chrome's real side panel does. */}
+      <AnimatePresence>
+        {phase === 'panel' && scene.id === 'report' ? (
+          <motion.aside
+            key="side-panel"
+            className="side-panel"
+            initial={{ x: '108%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '108%' }}
+            transition={SPRING_SHEET}
+            aria-hidden="true"
+            inert
+          >
+            <web-butler style={{ display: 'block', height: '100%' }}>
+              <div
+                id="web-butler-root"
+                style={{ '--wc-selection': ACCENT, height: '100%' } as CSSProperties}
+              >
+                <ReportView
+                  title="Plan comparison"
+                  description="Prices, limits, and the fine print, side by side."
+                  meta="Filed by Web Butler · plans.example"
+                  text={REPORT_MD}
+                />
+              </div>
+            </web-butler>
+          </motion.aside>
+        ) : null}
       </AnimatePresence>
 
       {/* The butler, docked like the real thing — and inert: real
@@ -261,7 +375,7 @@ export function Demo() {
                     {/* Results rise into the dock with the extension's
                         answer-slot spring. */}
                     <AnimatePresence initial={false}>
-                      {phase === 'done' ? (
+                      {phase === 'done' || phase === 'point' || phase === 'panel' ? (
                         <motion.div
                           key={`${scene.id}-result`}
                           initial={{ opacity: 0, y: 8, scale: 0.98 }}
@@ -345,6 +459,10 @@ export function Demo() {
                 )}
               </AnimatePresence>
             </div>
+
+            {/* The butler's own hand: the same GhostCursor the extension
+                animates while it drives a page for real. */}
+            <GhostCursor state={cursor} accentColor={ACCENT} />
           </div>
         </web-butler>
       </div>

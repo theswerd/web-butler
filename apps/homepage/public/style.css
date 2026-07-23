@@ -229,7 +229,10 @@ main {
   min-height: 340px;
   background:
     linear-gradient(to bottom, rgba(0, 0, 0, 0.012), transparent 60px);
+  /* The side panel squeezes the page, the way real Chrome does. */
+  transition: padding-right 420ms cubic-bezier(0.22, 1, 0.36, 1);
 }
+[data-panel='open'] .stage { padding-right: 318px; }
 
 /* Skeleton feed */
 .feed { display: flex; flex-direction: column; gap: 10px; }
@@ -357,8 +360,26 @@ main {
   right: 18px;
   bottom: 14px;
   z-index: 5;
+  transition: right 420ms cubic-bezier(0.22, 1, 0.36, 1);
 }
+[data-panel='open'] .butler { right: 318px; }
 .butler #web-butler-root { width: 100%; }
+
+/* Chrome's side panel, in miniature: docked to the window's right edge,
+   below the address bar, serving the real ReportView. */
+.side-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 300px;
+  z-index: 4;
+  overflow: hidden;
+  background: #fff;
+  border-left: 1px solid var(--hairline);
+  box-shadow: -14px 0 36px -22px rgba(0, 0, 0, 0.25);
+}
+.side-panel #web-butler-root { height: 100%; }
 
 /* Scenario tabs, set in the eyebrow voice. */
 .demo-tabs {
@@ -392,6 +413,10 @@ main {
 @media (max-width: 640px) {
   .hero { padding-top: 48px; }
   .stage { padding-bottom: 70px; }
+  /* Not enough room to squeeze: the side panel overlays instead. */
+  .side-panel { width: 82%; z-index: 6; }
+  [data-panel='open'] .stage { padding-right: 18px; }
+  [data-panel='open'] .butler { right: 18px; }
 }
 
 /* ---------------------------------------------------------------------
