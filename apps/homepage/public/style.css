@@ -513,6 +513,14 @@ main {
 .demo-tabs button:hover { color: var(--text-2); }
 .demo-tabs button.on { color: var(--ink); }
 
+/* The demo prompt is real but scripted: the field ignores the pointer and
+   never shows a caret (the shell auto-focuses it on panel clicks), while
+   the plus/send buttons around it keep their hover and tap life. */
+[data-demo-prompt] textarea {
+  pointer-events: none;
+  caret-color: transparent;
+}
+
 /* The selection line: one element, shared across tabs via layoutId, so it
    slides to the active tab instead of blinking on and off. */
 .tab-line {

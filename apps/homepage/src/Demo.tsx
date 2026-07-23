@@ -545,7 +545,11 @@ export function Demo() {
                       </div>
                     ) : null}
 
-                    <div style={{ width: '100%' }} aria-hidden="true" inert>
+                    {/* Live for the pointer so the plus button's bowtie does
+                        its straighten-the-tie shake and the send arrow keeps
+                        its tap squish; the field itself ignores the mouse
+                        (data-demo-prompt CSS) so no stray caret appears. */}
+                    <div style={{ width: '100%' }} data-demo-prompt>
                       <PromptPanel
                         leading={
                           <PlusButton
@@ -569,10 +573,10 @@ export function Demo() {
                     animate="visible"
                     exit="hidden"
                     style={{ transformOrigin: 'bottom center' }}
-                    aria-hidden="true"
-                    inert
                   >
-                    <CollapsedPill onOpen={noop} />
+                    {/* Fully live: hover shakes the bowtie, clicking opens
+                        the shell early — same as the real pill. */}
+                    <CollapsedPill onOpen={() => setOpen(true)} />
                   </motion.div>
                 )}
               </AnimatePresence>
