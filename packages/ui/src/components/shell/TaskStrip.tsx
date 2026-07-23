@@ -1,5 +1,11 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { HiMiniStop, HiOutlineDocumentText, HiXMark } from 'react-icons/hi2';
+import { useState } from 'react';
+import {
+  HiMiniStop,
+  HiMinus,
+  HiOutlineDocumentText,
+  HiXMark,
+} from 'react-icons/hi2';
 import type { Task } from '../../lib/shell';
 import { SPRING_UI } from '../../lib/motion';
 
@@ -34,17 +40,41 @@ function statusDot(status: Task['status']) {
   return 'webbutler:bg-[var(--wc-selection)]';
 }
 
+/** A soft ping behind the dot while the butler works. */
+function StatusMark({ task }: { task: Task }) {
+  return (
+    <span className="webbutler:relative webbutler:flex webbutler:size-1.5 webbutler:shrink-0">
+      {task.status === 'running' ? (
+        <motion.span
+          aria-hidden
+          className={`webbutler:absolute webbutler:inset-0 webbutler:rounded-full ${statusDot(task.status)}`}
+          animate={{ scale: [1, 2.2], opacity: [0.5, 0] }}
+          transition={{ duration: 1.6, repeat: Infinity, ease: 'easeOut' }}
+        />
+      ) : null}
+      <span
+        aria-hidden
+        className={`webbutler:relative webbutler:size-1.5 webbutler:rounded-full ${statusDot(task.status)}`}
+      />
+    </span>
+  );
+}
+
 /**
- * The live task indicator that docks with the prompt: one compact row per
- * ongoing (or just-finished) task, in every tab. Each row shows the task's
- * status, its prompt, and — while running — the newest line of its
- * activity feed, so "what is it doing right now" is visible without
- * opening anything.
+ * The live task indicator that docks with the prompt, in every tab. Each
+ * task is a compact pill that hugs its content — pills wrap into rows
+ * instead of each claiming the shell's full width — showing the task's
+ * status, its prompt, and (while running) the newest line of its activity
+ * feed, capped so no pill sprawls.
  *
- * The row body is a click target that REFERENCES the task, the same
+ * A pill's body is a click target that REFERENCES the task, the same
  * gesture as referencing a page element: the next message sent goes onto
- * that task's conversation instead of starting a new one. The trailing
+ * that task's conversation instead of starting a new one. Trailing
  * controls open the transcript and stop/dismiss.
+ *
+ * The whole strip minimizes to a single count pill (pulsing while
+ * anything runs) via the trailing "–" control, for when you want the
+ * tasks out of the way but not out of mind.
  */
 export function TaskStrip({
   tasks,
@@ -54,14 +84,73 @@ export function TaskStrip({
   onCancel,
   onDismiss,
 }: TaskStripProps) {
+  const [minimized, setMinimized] = useState(false);
+
   if (tasks.length === 0) return null;
 
+  const running = tasks.filter((task) => task.status === 'running').length;
+  const anyUnseen = tasks.some(
+    (task) => task.status !== 'running' && !task.seen,
+  );
+
+  if (minimized) {
+    const summary =
+      running > 0
+        ? `${running} running${tasks.length > running ? ` · ${tasks.length - running} done` : ''}`
+        : `${tasks.length} task${tasks.length === 1 ? '' : 's'}`;
+    return (
+      <div className="webbutler:flex webbutler:w-full">
+        <motion.button
+          type="button"
+          layout
+          initial={{ opacity: 0, scale: 0.96 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={SPRING_UI}
+          aria-label={`Show tasks: ${summary}`}
+          aria-expanded={false}
+          onClick={() => setMinimized(false)}
+          className="webbutler:flex webbutler:cursor-pointer webbutler:select-none webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:border webbutler:border-[var(--wc-border)] webbutler:bg-[var(--wc-surface)] webbutler:py-0.5 webbutler:pr-2 webbutler:pl-2 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-colors webbutler:duration-100 webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:bg-[var(--wc-hover-1)]"
+        >
+          <span className="webbutler:relative webbutler:flex webbutler:size-1.5 webbutler:shrink-0">
+            {running > 0 ? (
+              <motion.span
+                aria-hidden
+                className="webbutler:absolute webbutler:inset-0 webbutler:rounded-full webbutler:bg-[var(--wc-selection)]"
+                animate={{ scale: [1, 2.2], opacity: [0.5, 0] }}
+                transition={{ duration: 1.6, repeat: Infinity, ease: 'easeOut' }}
+              />
+            ) : null}
+            <span
+              aria-hidden
+              className={`webbutler:relative webbutler:size-1.5 webbutler:rounded-full ${
+                running > 0 || anyUnseen
+                  ? 'webbutler:bg-[var(--wc-selection)]'
+                  : 'webbutler:bg-[var(--wc-text-3)]'
+              }`}
+            />
+          </span>
+          <span className="webbutler:text-[10px] webbutler:font-medium webbutler:text-[var(--wc-text-2)]">
+            {summary}
+          </span>
+        </motion.button>
+      </div>
+    );
+  }
+
   return (
-    <div className="webbutler:flex webbutler:w-full webbutler:flex-col webbutler:gap-1">
+    <div className="webbutler:flex webbutler:w-full webbutler:flex-wrap webbutler:items-center webbutler:gap-1">
       <AnimatePresence initial={false}>
         {tasks.map((task) => {
           const selected = task.id === selectedId;
-          const running = task.status === 'running';
+          const isRunning = task.status === 'running';
+          // The pill's second line of life, width-capped so a pill never
+          // sprawls: live activity while running, the outcome once done,
+          // an accent "replying" note while referenced.
+          const detail = selected
+            ? 'replying'
+            : isRunning
+              ? (task.activity ?? 'Starting…')
+              : (task.outcome ?? STATUS_LABEL[task.status]);
           return (
             <motion.div
               key={task.id}
@@ -84,70 +173,40 @@ export function TaskStrip({
                 event.preventDefault();
                 onSelect(task);
               }}
-              className={`webbutler:group webbutler:flex webbutler:w-full webbutler:cursor-pointer webbutler:select-none webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:border webbutler:py-0.5 webbutler:pr-0.5 webbutler:pl-2 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-[background-color,border-color,box-shadow] webbutler:duration-100 ${
+              className={`webbutler:group webbutler:flex webbutler:max-w-full webbutler:cursor-pointer webbutler:select-none webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:border webbutler:py-0.5 webbutler:pr-0.5 webbutler:pl-2 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-[background-color,border-color,box-shadow] webbutler:duration-100 ${
                 selected
                   ? 'webbutler:border-[var(--wc-selection)] webbutler:bg-[var(--wc-surface)] webbutler:shadow-[0_0_0_0.5px_var(--wc-selection)]'
                   : 'webbutler:border-[var(--wc-border)] webbutler:bg-[var(--wc-surface)] webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:bg-[var(--wc-hover-1)]'
               }`}
             >
-              {/* Status: a steady dot, pulsing while the butler works. */}
-              <span className="webbutler:relative webbutler:flex webbutler:size-1.5 webbutler:shrink-0">
-                {running ? (
-                  <motion.span
-                    aria-hidden
-                    className={`webbutler:absolute webbutler:inset-0 webbutler:rounded-full ${statusDot(task.status)}`}
-                    animate={{ scale: [1, 2.2], opacity: [0.5, 0] }}
-                    transition={{
-                      duration: 1.6,
-                      repeat: Infinity,
-                      ease: 'easeOut',
-                    }}
-                  />
-                ) : null}
-                <span
-                  aria-hidden
-                  className={`webbutler:relative webbutler:size-1.5 webbutler:rounded-full ${statusDot(task.status)}`}
-                />
-              </span>
+              <StatusMark task={task} />
 
-              <span className="webbutler:max-w-[38%] webbutler:shrink-0 webbutler:truncate webbutler:text-[11px] webbutler:leading-4 webbutler:font-medium webbutler:text-[var(--wc-ink)]">
+              <span className="webbutler:max-w-[140px] webbutler:shrink-0 webbutler:truncate webbutler:text-[11px] webbutler:leading-4 webbutler:font-medium webbutler:text-[var(--wc-ink)]">
                 {task.prompt}
               </span>
 
-              {/* The living part: what it's doing right now (running), or
-                  how it ended. Ambient while live (dimmest text), a shade
-                  brighter once it's an outcome, accent while replying.
-                  Swaps drift up a few px so changes read as motion, not
-                  flicker. */}
+              {/* Swaps drift up a few px so changes read as motion, not
+                  flicker. title carries the full text the cap hides. */}
               <span
-                className={`webbutler:min-w-0 webbutler:flex-1 webbutler:truncate webbutler:text-[10px] ${
+                title={detail}
+                className={`webbutler:max-w-[170px] webbutler:truncate webbutler:text-[10px] ${
                   selected
                     ? 'webbutler:text-[var(--wc-selection)]'
-                    : running
+                    : isRunning
                       ? 'webbutler:text-[var(--wc-text-4)]'
                       : 'webbutler:text-[var(--wc-text-3)]'
                 }`}
               >
                 <AnimatePresence mode="popLayout" initial={false}>
                   <motion.span
-                    key={
-                      selected
-                        ? 'replying'
-                        : running
-                          ? (task.activity ?? 'starting')
-                          : task.status
-                    }
+                    key={detail}
                     initial={{ opacity: 0, y: 3 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -3 }}
                     transition={{ duration: 0.18, ease: 'easeOut' }}
                     className="webbutler:inline-block webbutler:max-w-full webbutler:truncate webbutler:align-bottom"
                   >
-                    {selected
-                      ? 'Your next message continues this task'
-                      : running
-                        ? (task.activity ?? 'Starting…')
-                        : (task.outcome ?? STATUS_LABEL[task.status])}
+                    {detail}
                   </motion.span>
                 </AnimatePresence>
               </span>
@@ -165,7 +224,7 @@ export function TaskStrip({
                 <HiOutlineDocumentText size={11} aria-hidden />
               </button>
 
-              {running ? (
+              {isRunning ? (
                 <button
                   type="button"
                   aria-label="Stop this task"
@@ -194,6 +253,18 @@ export function TaskStrip({
           );
         })}
       </AnimatePresence>
+
+      {/* Tuck the strip away — it becomes the count pill above. */}
+      <motion.button
+        type="button"
+        layout
+        aria-label="Minimize tasks"
+        aria-expanded
+        onClick={() => setMinimized(true)}
+        className="webbutler:flex webbutler:size-5 webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:justify-center webbutler:rounded-full webbutler:text-[var(--wc-text-4)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[var(--wc-ink)]"
+      >
+        <HiMinus size={11} aria-hidden />
+      </motion.button>
     </div>
   );
 }
