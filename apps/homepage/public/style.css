@@ -706,6 +706,7 @@ main {
   color: var(--text-3);
 }
 .how-steps kbd {
+  display: inline-block;
   font-family: var(--mono);
   font-size: 12px;
   padding: 1px 5px;
@@ -713,6 +714,14 @@ main {
   border-bottom-width: 2px;
   border-radius: 5px;
   color: var(--text-2);
+  transition: transform 80ms ease, background 80ms ease, border-color 80ms ease;
+}
+/* Pressing the real ⌘E presses the drawn one: down a notch and grayed. */
+.how-steps kbd.pressed {
+  transform: translateY(1.5px);
+  background: rgba(0, 0, 0, 0.07);
+  border-color: rgba(0, 0, 0, 0.16);
+  color: var(--ink);
 }
 @media (max-width: 760px) {
   .how-steps {

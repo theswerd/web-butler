@@ -208,6 +208,24 @@
     <a href="https://x.com/benswerd">@benswerd</a>
   </footer>
 
+  <script>
+    // ⌘E opens the butler in the real extension. Here it at least presses
+    // the drawn keycap in the how-it-works step. Released on a timer:
+    // macOS swallows keyup for letter keys while ⌘ is held.
+    (() => {
+      const kbd = document.querySelector('.how-steps kbd');
+      if (!kbd) return;
+      let up;
+      window.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && (e.key === 'e' || e.key === 'E')) {
+          e.preventDefault();
+          kbd.classList.add('pressed');
+          clearTimeout(up);
+          up = setTimeout(() => kbd.classList.remove('pressed'), 260);
+        }
+      });
+    })();
+  </script>
   <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>
