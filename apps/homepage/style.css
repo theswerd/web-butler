@@ -108,15 +108,17 @@ a { color: inherit; }
 }
 
 .top-link {
-  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
   color: var(--text-3);
-  text-decoration: none;
-  padding: 4px 10px;
-  border: 1px solid transparent;
   border-radius: 999px;
-  transition: color 120ms, border-color 120ms;
+  transition: color 120ms, background-color 120ms;
 }
-.top-link:hover { color: var(--ink); border-color: var(--border); }
+.top-link:hover { color: var(--ink); background: var(--hover); }
+.top-link svg { display: block; }
 
 main { max-width: 960px; margin: 0 auto; padding: 0 24px; }
 
