@@ -17,13 +17,17 @@ import {
   DEFAULT_SETTINGS,
   ElementHighlight,
   ElementPickerOverlay,
+  GhostCursor,
+  INITIAL_GHOST_CURSOR,
   MESSAGE,
   MenuPanel,
   OnboardingCard,
   PlusButton,
   PromptPanel,
   RepairToast,
+  TaskStrip,
   TaskToast,
+  type GhostCursorState,
   comboMatches,
   capturePageContext,
   hotkeyRecording,
@@ -109,6 +113,8 @@ export function App() {
     finished,
     clearFinished,
     markSeen,
+    markTaskSeen,
+    cancelTask,
     removeTask,
     clearTasks,
   } = useTasks();
@@ -136,6 +142,14 @@ export function App() {
   // Deliberately not persisted — selections are DOM-specific to this page.
   const [pickerActive, setPickerActive] = useState(false);
   const [picked, setPicked] = useState<PickedElement[]>([]);
+  // A task referenced from the strip: the next message is a follow-up onto
+  // it (same agent session) instead of a fresh task — the task-shaped
+  // sibling of referencing a page element.
+  const [replyTaskId, setReplyTaskId] = useState<string | null>(null);
+  // The butler's ghost cursor while it drives this tab (browser control).
+  // Driven entirely by BROWSER_CURSOR messages from the background.
+  const [ghostCursor, setGhostCursor] =
+    useState<GhostCursorState>(INITIAL_GHOST_CURSOR);
   // Chip currently hovered — its page element gets the glow treatment.
   const [hoveredChip, setHoveredChip] = useState<PickedElement | null>(null);
   // References whose selector no longer resolves (element deleted/replaced).
@@ -407,7 +421,7 @@ export function App() {
         })),
       );
       setSending(true);
-      void startRun(text, page)
+      void startRun(text, page, replyTaskId ?? undefined)
         .then((result) => {
           if (!result || !('authRequired' in result)) return;
           // Rejected — no AI connected. Put the message back in the box and
@@ -422,8 +436,9 @@ export function App() {
         })
         .finally(() => setSending(false));
       setPicked([]);
+      setReplyTaskId(null);
     },
-    [picked, missingIds, startRun, patchShell, connectCodex],
+    [picked, missingIds, replyTaskId, startRun, patchShell, connectCodex],
   );
 
   // Hand a broken extension back to the agent. The prompt carries the
@@ -462,17 +477,60 @@ export function App() {
         if (message.open) open();
         else collapse();
       }
+      if (message?.type === MESSAGE.BROWSER_CURSOR) {
+        const cursor = message.cursor;
+        if (cursor.kind === 'hide') {
+          setGhostCursor((prev) => ({ ...prev, visible: false }));
+        } else if (cursor.kind === 'move') {
+          setGhostCursor((prev) => ({
+            ...prev,
+            x: cursor.x,
+            y: cursor.y,
+            label: cursor.label,
+            visible: true,
+          }));
+        } else {
+          // press / type — snap to the point and re-fire the ripple.
+          setGhostCursor((prev) => ({
+            ...prev,
+            x: cursor.x,
+            y: cursor.y,
+            visible: true,
+            pressCount: prev.pressCount + 1,
+          }));
+        }
+      }
     };
 
     browser.runtime.onMessage.addListener(onMessage);
     return () => browser.runtime.onMessage.removeListener(onMessage);
   }, [toggle, open, collapse]);
 
+  // Live mirrors for the close-combo handler: whether a message (answer
+  // card) is on screen and whether a task reference is armed. Refs, not
+  // deps — the keydown effect shouldn't re-bind on every run update.
+  const answerOpenRef = useRef(false);
+  answerOpenRef.current = run?.result != null;
+  const replyTaskRef = useRef<string | null>(null);
+  replyTaskRef.current = replyTaskId;
+
   useEffect(() => {
     if (!shell) return;
 
     const dispatchCombo = (event: KeyboardEvent) => {
       if (comboMatches(settings.hotkeyClose, event)) {
+        // An open message dismisses first, before anything else closes —
+        // then the armed task reference, then the menu, then the shell.
+        if (answerOpenRef.current) {
+          event.preventDefault();
+          clearRun();
+          return;
+        }
+        if (replyTaskRef.current) {
+          event.preventDefault();
+          setReplyTaskId(null);
+          return;
+        }
         if (shell.menuOpen) {
           event.preventDefault();
           patchShell({ menuOpen: false });
@@ -533,6 +591,7 @@ export function App() {
     collapse,
     toggle,
     patchShell,
+    clearRun,
     settings.hotkeyClose,
     settings.hotkeyPrimary,
   ]);
@@ -704,6 +763,29 @@ export function App() {
     </AnimatePresence>
   );
 
+  // The strip's slice of the session: everything running plus finishes the
+  // user hasn't acknowledged yet, newest first. Running rows keep their
+  // place in every tab — this is the "what is it doing" surface.
+  const stripTasks = tasks
+    .filter((task) => task.status === 'running' || !task.seen)
+    .slice(0, 4);
+
+  const taskStrip =
+    stripTasks.length > 0 ? (
+      <div className={isTop ? 'webbutler:mt-1.5' : 'webbutler:mb-1.5'}>
+        <TaskStrip
+          tasks={stripTasks}
+          selectedId={replyTaskId}
+          onSelect={(task) =>
+            setReplyTaskId((current) => (current === task.id ? null : task.id))
+          }
+          onOpen={openTaskPanel}
+          onCancel={(task) => cancelTask(task.id)}
+          onDismiss={(task) => markTaskSeen(task.id)}
+        />
+      </div>
+    ) : null;
+
   const chips = (
     <ContextChips
       elements={picked}
@@ -741,6 +823,9 @@ export function App() {
           }}
         />
       ) : null}
+
+      {/* The butler's pointer while it drives the page (browser control). */}
+      <GhostCursor state={ghostCursor} accentColor={accentColor} />
 
       {/* Every referenced element keeps a quiet accent selection mark; the one
           whose chip is hovered pulses. Missing references get no mark. */}
@@ -866,10 +951,12 @@ export function App() {
                 ) : null}
               </AnimatePresence>
 
-              {/* Answers + chips stack away from the screen edge: above the
-                  prompt when docked at the bottom, below when docked at top. */}
+              {/* Answers + task strip + chips stack away from the screen
+                  edge: above the prompt when docked at the bottom, below
+                  when docked at top. */}
               {!isTop ? answerSlot : null}
               {!isTop ? gateSlot : null}
+              {!isTop ? taskStrip : null}
               {picked.length > 0 && !isTop ? (
                 <div className="webbutler:mb-1.5">{chips}</div>
               ) : null}
@@ -902,7 +989,11 @@ export function App() {
                   inputRef={promptRef}
                   onArrowLeftAtStart={() => plusRef.current?.focus()}
                   onSubmit={handleSend}
-                  loading={sending || run?.status === 'working'}
+                  // Only the send round-trip blocks the box. Running tasks
+                  // no longer hold the prompt hostage — they live on the
+                  // strip (statuses, stop, follow-up) while the user types
+                  // the next thing.
+                  loading={sending}
                   onStop={clearRun}
                   pickerActive={pickerActive}
                   onTogglePicker={() => setPickerActive((current) => !current)}
@@ -922,6 +1013,7 @@ export function App() {
               {picked.length > 0 && isTop ? (
                 <div className="webbutler:mt-1.5">{chips}</div>
               ) : null}
+              {isTop ? taskStrip : null}
               {isTop ? gateSlot : null}
               {isTop ? answerSlot : null}
             </motion.div>

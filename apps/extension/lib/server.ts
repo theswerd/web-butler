@@ -1,5 +1,8 @@
 import { storage } from 'wxt/utils/storage';
 import type {
+  BrowserAction,
+  BrowserActionResult,
+  OpenTab,
   PageContext,
   ProviderAuth,
   Report,
@@ -28,10 +31,16 @@ const sandboxVmIdItem = storage.defineItem<string | null>(
 );
 
 async function signInAnonymously(): Promise<string> {
+  // credentials: 'omit' — Better Auth also drops a session cookie on the
+  // server origin, and if a stale one rides along on a FRESH sign-in the
+  // anonymous plugin rejects with "Anonymous users cannot sign in again
+  // anonymously" (400), wedging init forever. Identity here is purely the
+  // bearer token; cookies must never participate.
   const response = await fetch(`${SERVER_URL}/api/auth/sign-in/anonymous`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: '{}',
+    credentials: 'omit',
   });
   if (!response.ok) {
     throw new Error(`anonymous sign-in failed: ${response.status}`);
@@ -53,6 +62,9 @@ async function authedFetch(path: string, init?: RequestInit): Promise<Response> 
   const request = (t: string) =>
     fetch(`${SERVER_URL}${path}`, {
       ...init,
+      // Cookie-free (see signInAnonymously) — the bearer token IS the
+      // identity, and a mismatched leftover session cookie must not vote.
+      credentials: 'omit',
       headers: { ...init?.headers, Authorization: `Bearer ${t}` },
     });
 
@@ -208,18 +220,56 @@ const STREAM_IDLE_TIMEOUT_MS = 90_000;
 const TURN_TIMEOUT_MS = 30 * 60_000;
 
 /**
+ * Post one browser action's result back to the waiting turn, unblocking
+ * the `browser` CLI on the VM. Fire-and-forget from the caller's view: a
+ * dropped result just lets the CLI (and the server) time the action out.
+ */
+export async function postActionResult(
+  id: string,
+  result: BrowserActionResult,
+): Promise<void> {
+  try {
+    await authedFetch('/api/agent/action-result', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, result }),
+    });
+  } catch {
+    // Server unreachable — the action times out on both ends.
+  }
+}
+
+export type RunAgentOptions = {
+  provider: DeviceAuthProvider;
+  prompt: string;
+  page?: PageContext;
+  taskId?: string;
+  /** The user's open tabs, for envelope context + browser control. */
+  openTabs?: OpenTab[];
+  /** Streamed session updates (activity feed). */
+  onUpdate?: (update: Record<string, unknown>) => void;
+  /** A browser action the agent requested — perform it and return the
+      result. The turn's stream stays open while this runs. */
+  onAction?: (action: BrowserAction) => Promise<BrowserActionResult>;
+  /** User-initiated cancel (the task chip's stop). Aborting propagates
+      through the server's request signal and cancels the agent turn on
+      the VM — not just our read of it. */
+  signal?: AbortSignal;
+};
+
+/**
  * Run one agent turn on the sandbox VM via the server's ACP bridge.
  * The response is NDJSON: `{"update"}` lines stream while the agent works
- * (forwarded to `onUpdate`), and exactly one terminal line carries either
- * the outcomes (with the raw reply text) or an error.
+ * (forwarded to `onUpdate`), `{"action"}` lines request a browser action
+ * (handed to `onAction`, whose result is POSTed back out-of-band), and
+ * exactly one terminal line carries either the outcomes (with the raw
+ * reply text) or an error.
  */
 export async function runAgentPrompt(
-  provider: DeviceAuthProvider,
-  prompt: string,
-  page?: PageContext,
-  taskId?: string,
-  onUpdate?: (update: Record<string, unknown>) => void,
+  opts: RunAgentOptions,
 ): Promise<AgentTurnOutcome> {
+  const { provider, prompt, page, taskId, openTabs, onUpdate, onAction, signal } =
+    opts;
   // Aborting the fetch propagates through the server's request signal and
   // cancels the actual agent turn on the VM — not just our read of it.
   const abort = new AbortController();
@@ -228,6 +278,9 @@ export async function runAgentPrompt(
     timeoutError = reason;
     abort.abort();
   };
+  // The caller's stop button funnels into the same abort as the watchdogs.
+  if (signal?.aborted) fail('Stopped.');
+  signal?.addEventListener('abort', () => fail('Stopped.'), { once: true });
   let idleTimer = setTimeout(() => {}, 0);
   const armIdle = () =>
     (idleTimer = setTimeout(
@@ -246,7 +299,7 @@ export async function runAgentPrompt(
     const response = await authedFetch('/api/agent/prompt', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, prompt, page, taskId }),
+      body: JSON.stringify({ provider, prompt, page, taskId, openTabs }),
       signal: abort.signal,
     });
     if (!response.ok || !response.body) {
@@ -265,6 +318,7 @@ export async function runAgentPrompt(
       if (!line.trim()) return;
       let message: {
         update?: Record<string, unknown>;
+        action?: BrowserAction;
         done?: boolean;
         stopReason?: string;
         text?: string;
@@ -277,7 +331,26 @@ export async function runAgentPrompt(
         return; // torn frame — the terminal line is what matters
       }
       if (message.update) onUpdate?.(message.update);
-      else if (message.done) {
+      else if (message.action) {
+        // Perform it off the read loop so the stream keeps draining
+        // (heartbeats, further lines) while the cursor animates. The
+        // result rides back to the server on its own request.
+        const requested = message.action;
+        if (onAction) {
+          void onAction(requested)
+            .catch((error: unknown) => ({
+              ok: false as const,
+              error:
+                error instanceof Error ? error.message : 'browser action failed',
+            }))
+            .then((result) => postActionResult(requested.id, result));
+        } else {
+          void postActionResult(requested.id, {
+            ok: false,
+            error: 'this browser cannot perform actions right now',
+          });
+        }
+      } else if (message.done) {
         const text = message.text ?? '';
         outcome = {
           text,

@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   HiExclamationTriangle,
   HiOutlinePuzzlePiece,
@@ -21,6 +21,9 @@ type ExtensionsViewProps = {
   /** "Fix" on a broken row — the shell sends the agent a repair prompt,
       seeded with the script's own diagnosis when there is one. */
   onFix?: (extension: SiteExtension, reason?: string) => void;
+  /** Land with this extension in view and briefly flashed — set when the
+      user arrived via a task row's "View extension" chip. */
+  highlightId?: string;
 };
 
 /**
@@ -160,15 +163,37 @@ export function ExtensionsView({
   onOpenSettings,
   pageUrl,
   onFix,
+  highlightId,
 }: ExtensionsViewProps) {
   const { extensions, userScriptsAvailable, health } = state;
   const onThisPage = pageUrl
     ? extensions.filter((ext) => matchesAnyPattern(ext.urlPatterns, pageUrl))
     : [];
-  // Land on the contextual view when it has anything to show.
-  const [filter, setFilter] = useState<"page" | "all">(
-    onThisPage.length > 0 ? "page" : "all",
+  // Land on the contextual view when it has anything to show — unless we
+  // were sent here to a specific extension that filter would hide.
+  const [filter, setFilter] = useState<"page" | "all">(() =>
+    onThisPage.length > 0 &&
+    (!highlightId || onThisPage.some((ext) => ext.id === highlightId))
+      ? "page"
+      : "all",
   );
+
+  // The arrival highlight: scroll the target row into view and tint it,
+  // then let the tint fade (the row keeps a slow color transition).
+  const [flash, setFlash] = useState<string | null>(null);
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  useEffect(() => {
+    if (!highlightId) return;
+    setFlash(highlightId);
+    const raf = requestAnimationFrame(() =>
+      rowRefs.current[highlightId]?.scrollIntoView({ block: "nearest" }),
+    );
+    const timer = setTimeout(() => setFlash(null), 1600);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
+  }, [highlightId]);
 
   if (extensions.length === 0) {
     return (
@@ -220,7 +245,14 @@ export function ExtensionsView({
           return (
             <div
               key={ext.id}
-              className="webbutler:group webbutler:flex webbutler:items-start webbutler:gap-2 webbutler:px-3 webbutler:py-1.5"
+              ref={(el) => {
+                rowRefs.current[ext.id] = el;
+              }}
+              className={`webbutler:group webbutler:flex webbutler:items-start webbutler:gap-2 webbutler:px-3 webbutler:py-1.5 webbutler:transition-colors webbutler:duration-700 ${
+                flash === ext.id
+                  ? "webbutler:bg-[color-mix(in_srgb,var(--wc-selection)_14%,transparent)]"
+                  : ""
+              }`}
             >
               <div className="webbutler:min-w-0 webbutler:flex-1">
                 <p

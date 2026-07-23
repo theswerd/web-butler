@@ -16,7 +16,9 @@ import { WORKSPACE_DIR } from './acp';
  *    VM and validated. The agent declares what it produced there: a short
  *    markdown response or a long-form artifact (extensions and actions
  *    will join this union later). A missing or malformed file falls back
- *    to the streamed reply text as a plain response.
+ *    to the streamed reply text as a plain response, flagged (fileMissing
+ *    or invalid) so the prompt route can push back rather than present
+ *    undeclared work as done.
  */
 
 /** Where turn outcome files land on the VM. Created by the ACP prep step. */
@@ -53,6 +55,11 @@ export const extensionStageSchema = z.enum([
   'document_idle',
 ]);
 
+// The schema is deliberately forgiving about the slips agents actually
+// make (null for a missing id, a bare string where an array belongs,
+// over-long user-facing copy). Every outcome we can salvage is one the
+// user doesn't lose; genuine ambiguity (a script that skips the register
+// call, an unusable match pattern) is still rejected in extensionProblem.
 export const outcomeSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('response'),
@@ -72,13 +79,20 @@ export const outcomeSchema = z.discriminatedUnion('type', [
   // authoring contract the agent follows).
   z.object({
     type: z.literal('extension'),
-    action: z.enum(['create', 'update', 'delete']),
+    action: z.enum(['create', 'update', 'delete']).default('create'),
     /** The stored extension's id — required for update/delete. */
-    id: z.string().optional(),
-    name: z.string().min(1).max(80),
-    description: z.string().min(1).max(300),
-    urlPatterns: z.array(z.string()).min(1).max(20),
-    stage: extensionStageSchema.default('document_idle'),
+    id: z
+      .string()
+      .nullish()
+      .transform((value) => value ?? undefined),
+    name: z.string().min(1).transform((value) => value.slice(0, 80)),
+    description: z.string().min(1).transform((value) => value.slice(0, 300)),
+    urlPatterns: z.preprocess(
+      (value) => (typeof value === 'string' ? [value] : value),
+      z.array(z.string()).min(1).max(20),
+    ),
+    /** An unknown or missing stage degrades to the default, not a reject. */
+    stage: extensionStageSchema.catch('document_idle'),
     script: z.string().max(100_000).default(''),
   }),
   // Coming later: 'action' (a step the butler takes on the user's behalf).
@@ -162,6 +176,39 @@ const outcomesFileSchema = z.object({
   outcomes: z.array(outcomeSchema).min(1),
 });
 
+/**
+ * Shape repairs that need to see the whole file, applied before schema
+ * validation: a lone outcome object instead of the { outcomes: [...] }
+ * wrapper, a single object where the array belongs, and a response that
+ * used "text" instead of "markdown".
+ */
+export function normalizeOutcomesFile(raw: unknown): unknown {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return Array.isArray(raw) ? { outcomes: raw } : raw;
+  }
+  const record = raw as Record<string, unknown>;
+  if (!('outcomes' in record)) {
+    return 'type' in record ? { outcomes: [normalizeOutcome(record)] } : raw;
+  }
+  const outcomes = Array.isArray(record.outcomes)
+    ? record.outcomes
+    : [record.outcomes];
+  return { ...record, outcomes: outcomes.map(normalizeOutcome) };
+}
+
+function normalizeOutcome(outcome: unknown): unknown {
+  if (outcome == null || typeof outcome !== 'object') return outcome;
+  const record = outcome as Record<string, unknown>;
+  if (
+    (record.type === 'response' || record.type === 'artifact') &&
+    typeof record.markdown !== 'string' &&
+    typeof record.text === 'string'
+  ) {
+    return { ...record, markdown: record.text };
+  }
+  return outcome;
+}
+
 export const BUTLER_BRIEFING = `# Web Butler
 
 You are Web Butler, the user's assistant living inside their browser. They talk to you from a small prompt attached to whatever page they are on. They ask questions about pages, ask you to complete tasks, and sometimes reference specific page elements.
@@ -180,7 +227,7 @@ Each user message arrives inside an envelope describing where they were:
 
 ## How to answer: the outcome file
 
-The outcome file is the ONLY thing the user sees. Your reasoning, tool calls, and streamed assistant text are all invisible to them — the UI shows just the outcome, so it must stand entirely on its own. Never refer to anything outside it: no "as mentioned above", no "the options I found" unless the outcome itself lists those options, no referencing offers, prices, or findings you saw along the way without restating them. Read your outcome back as a user who saw nothing else; if it leans on missing context, rewrite it.
+The outcome file is the ONLY thing the user sees, and the ONLY channel that creates anything. Your reasoning, tool calls, and streamed assistant text are all invisible to them — the UI shows just the outcome, so it must stand entirely on its own. Never refer to anything outside it: no "as mentioned above", no "the options I found" unless the outcome itself lists those options, no referencing offers, prices, or findings you saw along the way without restating them. Read your outcome back as a user who saw nothing else; if it leans on missing context, rewrite it.
 
 At the end of EVERY turn, write a JSON file at the exact path given in that turn's "Turn outcome" section (the path changes every turn; overwrite if it somehow exists). The file must be:
 
@@ -200,9 +247,23 @@ with exactly one outcome, one of:
 
 Prefer a response unless the user asked for something substantial enough to deserve a document, or for a page change that should persist. Never put a long document into a response.
 
-A fourth type, actions, will be added later; today only these three exist.
+## Acting in the page (browser control)
+
+Some tasks are done IN the page rather than written up: filling a form, composing an email, stepping through a flow. For those you can drive the user's real browser tab with the \`browser\` command — it moves a visible cursor and clicks/types like a person, and the user watches it happen. Read skills/browser-control/SKILL.md before using it. The rhythm is: \`browser snapshot\` to get a ref map of the page, then \`browser click\`/\`browser type\` on those refs, re-snapshotting after anything changes. After acting, still write a \`response\` outcome summarizing what you did and anything you left for the user to confirm. Use browser control only to ACT; to read or answer, the page HTML snapshot below is enough.
+
+A fourth outcome type, actions, will be added later; today only response/artifact/extension exist.
 
 Anything you print as normal assistant text is used only as a fallback when the outcome file is missing, so write the file every time — and even then, assume the user never read it.
+
+## Claims must match the outcome file
+
+The outcome file is not a summary of your work. It IS your work. It is the only channel that creates anything: an extension or artifact that appears in your prose but not in the file does not exist. No script is installed, no document is saved, and the user is left with a claim that has nothing behind it.
+
+- Never say you installed, created, updated, or deleted an extension unless the outcome file you wrote THIS turn contains that exact extension outcome.
+- Never say you produced an artifact unless the file you wrote this turn contains that artifact.
+- If you ran out of time, hit an error, or could not finish, write a response outcome that says so plainly. An honest "I could not finish this" is always better than a confident claim the system cannot back.
+
+The server compares your reply against the file after every turn. A claimed extension with no extension outcome behind it is surfaced to the user as a warning, not a success.
 
 ## Memory
 
@@ -238,6 +299,9 @@ export type TurnExtras = {
   }>;
   /** Other runs currently in flight (this one excluded). */
   ongoingTasks?: Array<{ prompt: string; startedAt: number; url?: string }>;
+  /** The user's open tabs, active one marked — the stage for browser
+      control and useful context on its own. */
+  openTabs?: Array<{ title: string; url: string; active: boolean }>;
   /** The user's settled task history, newest first. */
   recentTasks?: Array<{
     prompt: string;
@@ -337,6 +401,20 @@ export function buildTurnMessage(
     );
   }
 
+  const openTabs = extras.openTabs ?? [];
+  if (openTabs.length > 0) {
+    const items = openTabs.map((tab) => {
+      const active = tab.active ? ' (active — the browser-control stage)' : '';
+      return `- ${tab.title || '(untitled)'}${active}\n  ${tab.url}`;
+    });
+    parts.push(
+      '## Open tabs\n' +
+        "The user's currently open tabs. Browser control acts on the " +
+        'active one.\n' +
+        items.join('\n'),
+    );
+  }
+
   const ongoing = extras.ongoingTasks ?? [];
   if (ongoing.length > 0) {
     const items = ongoing.map(
@@ -371,38 +449,117 @@ export function buildTurnMessage(
   parts.push(`## User message\n${prompt}`);
   parts.push(
     '## Turn outcome\n' +
-      `When you finish this turn, write your outcomes JSON to exactly this path: ${outcomePath}`,
+      `When you finish this turn, write your outcomes JSON to exactly this path: ${outcomePath}\n` +
+      'Only this file creates anything. Do not tell the user an extension ' +
+      'or artifact exists unless this file declares it.',
   );
 
   return parts.join('\n\n');
 }
 
+/** One outcome-file read. `invalid` is set when the agent wrote a file we
+    could not accept — the caller can give it one corrective turn. */
+export type OutcomeRead = {
+  outcomes: Outcome[];
+  /** Why the written file was rejected; unset when the file was simply
+      missing (the fallback response is then business as usual). */
+  invalid?: string;
+  /** True when the agent wrote no file at all, so `outcomes` is just the
+      streamed reply repackaged. Distinguished from `invalid` because it
+      needs different pushback: the reply-vs-outcome claim check can be
+      more aggressive when nothing was declared, not merely misdeclared. */
+  fileMissing?: boolean;
+};
+
 /**
  * Collect the turn's outcomes from the VM (consuming the file). An agent
- * that didn't write the file, or wrote something invalid, degrades to its
- * streamed reply as a short response — the turn still lands.
+ * that didn't write the file degrades to its streamed reply as a short
+ * response. One that wrote an INVALID file additionally reports why, so
+ * the prompt route can ask it to correct the file rather than silently
+ * presenting the streamed reply as if the declared work landed.
  */
 export async function readOutcomes(
   vmId: string,
   outcomePath: string,
   fallbackText: string,
-): Promise<Outcome[]> {
+): Promise<OutcomeRead> {
+  let invalid: string | undefined;
+  let fileMissing = false;
   try {
     const vm = getFreestyle().vms.ref({ vmId });
     const result = await vm.exec({
       command: `cat ${outcomePath} && rm -f ${outcomePath}`,
       timeoutMs: 15_000,
     });
+    // Non-zero status: no file. The agent answered in plain text only.
     if (result.statusCode === 0) {
-      const parsed = outcomesFileSchema.safeParse(
-        JSON.parse(result.stdout ?? ''),
+      const raw = result.stdout ?? '';
+      try {
+        const parsed = outcomesFileSchema.safeParse(
+          normalizeOutcomesFile(JSON.parse(raw)),
+        );
+        if (parsed.success) return { outcomes: parsed.data.outcomes };
+        invalid = parsed.error.issues
+          .slice(0, 3)
+          .map((issue) => `${issue.path.join('.') || 'file'}: ${issue.message}`)
+          .join('; ');
+      } catch {
+        invalid = 'the file is not valid JSON';
+      }
+      console.warn(
+        `[butler] outcome file rejected on ${vmId} (${invalid}): ${raw.slice(0, 400)}`,
       );
-      if (parsed.success) return parsed.data.outcomes;
-      console.warn(`[butler] outcome file failed validation on ${vmId}`);
+    } else {
+      fileMissing = true;
     }
   } catch (error) {
+    // A failed read (VM hiccup, timeout) is NOT the agent's fault, so it
+    // sets neither flag: pushing back on the agent for it would be unfair
+    // and useless.
     console.warn(`[butler] outcome read failed on ${vmId}:`, error);
   }
   const text = fallbackText.trim();
-  return [{ type: 'response', markdown: text || 'Done.' }];
+  return {
+    outcomes: [{ type: 'response', markdown: text || 'Done.' }],
+    invalid,
+    fileMissing,
+  };
+}
+
+/** The corrective follow-up sent when a turn's outcome file was rejected. */
+export function outcomeRetryMessage(
+  problem: string,
+  outcomePath: string,
+): string {
+  return (
+    `Your outcome file from the previous turn was rejected: ${problem}.\n\n` +
+    'Do NOT redo the work. Write a corrected outcomes JSON file, following ' +
+    'the exact shape from your briefing (and skills/page-extension/SKILL.md ' +
+    `for extensions), to exactly this path: ${outcomePath}`
+  );
+}
+
+/** The corrective follow-up sent when the reply claims an extension the
+    outcome file never declared. The agent gets one turn to either back
+    the claim with the real outcome or retract it honestly. */
+export function extensionClaimRetryMessage(
+  outcomePath: string,
+  fileMissing: boolean,
+): string {
+  const observed = fileMissing
+    ? 'Your previous turn wrote no outcome file at all, yet your reply ' +
+      'says an extension was installed, created, or updated.'
+    : 'Your outcome file from the previous turn contains no extension ' +
+      'outcome, yet your reply says an extension was installed, created, ' +
+      'or updated.';
+  return (
+    `${observed} Only the outcome file creates extensions: nothing was ` +
+    'saved.\n\n' +
+    'Do NOT redo unrelated work. Do exactly one of these:\n' +
+    '1. If you actually authored the extension, write the outcomes JSON ' +
+    'with the real extension outcome (see skills/page-extension/SKILL.md) ' +
+    `to exactly this path: ${outcomePath}\n` +
+    '2. If you did not finish it, write a response outcome to that same ' +
+    'path that honestly tells the user no extension was installed.'
+  );
 }

@@ -37,8 +37,18 @@ export default defineConfig({
     description: 'Your butler for the web, an in-page agent on every site',
     // userScripts backs site extensions (agent-authored page mods); tabs +
     // host_permissions let the background find open tabs matching an
-    // extension's URL patterns and inject/revert without a reload.
-    permissions: ['storage', 'sidePanel', 'userScripts', 'tabs'],
+    // extension's URL patterns and inject/revert without a reload. debugger
+    // backs browser control: the agent drives the active tab (CDP input +
+    // DOM snapshots) behind a visible ghost cursor.
+    permissions: [
+      'storage',
+      'sidePanel',
+      'userScripts',
+      'tabs',
+      'debugger',
+      // OS notifications for tasks that finish while no shell is showing.
+      'notifications',
+    ],
     host_permissions: ['<all_urls>'],
     commands: {
       // Command id predates the rename; keeping it stable preserves any

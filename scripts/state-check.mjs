@@ -40,12 +40,19 @@ await promptIn(tabA).fill('is this page tracking me?');
 await promptIn(tabA).press('Enter');
 console.log('[A] sent tab-scoped question');
 
-// Shimmer should be up in A.
+// Concurrency model: the prompt frees right away; the running task shows
+// as a strip chip (its body is the follow-up reference target).
 await tabA.waitForTimeout(1000);
-const workingA = await tabA
-  .locator('#web-butler-root', { hasText: 'Working' })
+const stripA = await tabA
+  .locator('#web-butler-root [aria-label^="Reply to this task"]')
   .count();
-console.log('[A] working shimmer visible:', workingA > 0);
+console.log('[A] task strip chip visible:', stripA > 0);
+
+// ... and the same running task is visible from OTHER tabs too.
+const stripInB = await tabB
+  .locator('#web-butler-root [aria-label^="Reply to this task"]')
+  .count();
+console.log('[B] running task visible cross-tab:', stripInB > 0);
 
 // --- 2. Global job from tab B ----------------------------------------------
 await promptIn(tabB).fill(
@@ -60,6 +67,11 @@ const shimmerB = await tabB
   .locator('#web-butler-root', { hasText: 'Working' })
   .count();
 console.log('[B] prompt freed after delegation:', shimmerB === 0);
+// Both tasks now on B's strip (its own global + A's tab question).
+const stripCountB = await tabB
+  .locator('#web-butler-root [aria-label^="Reply to this task"]')
+  .count();
+console.log('[B] strip shows both running tasks:', stripCountB >= 2);
 
 // --- 3. Wait out the mock runs ---------------------------------------------
 await tabA.waitForTimeout(11_000);

@@ -101,8 +101,8 @@ export type TaskStatus = 'running' | 'done' | 'failed' | 'stopped';
  * One row of the session's activity: every run, ongoing or finished,
  * tab-scoped or global. One list per browser session, identical in every
  * tab — the background owns it and broadcasts changes. This is what the
- * menu's Tasks view lists, what badges count (unseen finished work), and
- * what completion toasts are cut from.
+ * menu's Tasks view lists, what badges count (unseen finished work), what
+ * completion toasts are cut from, and what the prompt's task strip shows.
  */
 export type Task = {
   /** Same id as the run that produced it. */
@@ -122,6 +122,9 @@ export type Task = {
   extensionId?: string;
   /** False = finished away from the user's attention; drives the badge. */
   seen: boolean;
+  /** The latest line of the live activity feed while running — what the
+      butler is doing RIGHT NOW, surfaced on task chips in every tab. */
+  activity?: string;
 };
 
 /**
@@ -132,8 +135,9 @@ export type Task = {
  */
 export type TaskUpdate = {
   at: number;
-  /** thought = agent reasoning (dim), message = reply text, tool = action. */
-  kind: 'thought' | 'message' | 'tool';
+  /** thought = agent reasoning (dim), message = reply text, tool = action,
+      user = a follow-up message the user added onto the running task. */
+  kind: 'thought' | 'message' | 'tool' | 'user';
   text: string;
 };
 
@@ -145,6 +149,56 @@ export type TaskUpdate = {
 export type PanelState =
   | { kind: 'report'; report: Report | null }
   | { kind: 'task'; task: Task; updates: TaskUpdate[] };
+
+// ---------------------------------------------------------------------------
+// Browser control — the agent driving the page through a visible ghost
+// cursor. The agent (on the VM) requests actions via the `browser` CLI;
+// the server relays them over the open prompt stream; the background runs
+// them with chrome.debugger while the content script animates a fake
+// cursor so it reads as a person doing the work, not a script.
+// ---------------------------------------------------------------------------
+
+/**
+ * One action the agent asked for. `id` correlates the request with its
+ * result across the VM ↔ server ↔ extension hops. Refs (`click`/`type`)
+ * come from the most recent `snapshot` of the same tab.
+ */
+export type BrowserAction = { id: string } & (
+  | { kind: 'tabs' }
+  | { kind: 'snapshot' }
+  | { kind: 'read' }
+  | { kind: 'navigate'; url: string }
+  | { kind: 'back' }
+  | { kind: 'click'; ref: string }
+  | { kind: 'type'; ref: string; text: string; submit?: boolean }
+  | { kind: 'key'; key: string }
+  | { kind: 'scroll'; dy: number }
+);
+
+/** The outcome of one BrowserAction, sent back to unblock the CLI. */
+export type BrowserActionResult =
+  | { ok: true; data?: unknown }
+  | { ok: false; error: string };
+
+/** An open browser tab, for the "Open tabs" turn context and `tabs`. */
+export type OpenTab = {
+  id: number;
+  title: string;
+  url: string;
+  /** The tab the user prompted from (the ghost cursor's stage). */
+  active: boolean;
+};
+
+/**
+ * A single instruction to the in-page ghost cursor. The background paces a
+ * sequence of these (move, then click/type) around the real debugger input
+ * so the pointer visibly travels to a target before it acts.
+ */
+export type CursorCommand =
+  | { kind: 'move'; x: number; y: number; label?: string }
+  | { kind: 'press'; x: number; y: number }
+  | { kind: 'type'; x: number; y: number }
+  | { kind: 'hide' };
 
 /** When a site extension's script first runs on a matching page. */
 export type ExtensionStage =
@@ -241,8 +295,11 @@ export const MESSAGE = {
   RUN_DONE: 'web-butler/run-done',
   // Tasks: content → background.
   TASKS_GET: 'web-butler/tasks-get',
-  /** Mark everything seen (user opened the Tasks view). */
+  /** Mark seen: everything (user opened the Tasks view), or one task
+      (dismissed its chip in the strip). */
   TASKS_SEEN: 'web-butler/tasks-seen',
+  /** Stop a running task: aborts its agent turn and settles it. */
+  TASKS_CANCEL: 'web-butler/tasks-cancel',
   /** Trash one task (running rows just vanish; the work isn't cancelled). */
   TASKS_DELETE: 'web-butler/tasks-delete',
   /** Bulk trash: 'old' clears settled history, 'all' empties the list. */
@@ -296,6 +353,9 @@ export const MESSAGE = {
   EXTENSION_BROKE: 'web-butler/extension-broke',
   /** Open chrome://extensions on this extension (user-scripts toggle). */
   USER_SCRIPTS_SETTINGS_OPEN: 'web-butler/user-scripts-settings-open',
+  // Browser control: background → origin tab (the ghost cursor stage).
+  /** Drive the in-page ghost cursor one step (move / press / type / hide). */
+  BROWSER_CURSOR: 'web-butler/browser-cursor',
 } as const;
 
 /** The extension list plus whether Chrome will actually inject them. */
@@ -343,12 +403,21 @@ export type WebButlerMessage =
   | { type: typeof MESSAGE.SET_OPEN; open: boolean }
   | { type: typeof MESSAGE.SHELL_GET }
   | { type: typeof MESSAGE.SHELL_PATCH; patch: Partial<ShellPersist> }
-  | { type: typeof MESSAGE.RUN_START; prompt: string; page: PageContext }
+  | {
+      type: typeof MESSAGE.RUN_START;
+      prompt: string;
+      page: PageContext;
+      /** Set when the message is a follow-up onto an existing task (its
+          chip was referenced in the prompt): the turn joins that task's
+          agent session instead of starting a fresh task. */
+      followUpTaskId?: string;
+    }
   | { type: typeof MESSAGE.RUN_GET }
   | { type: typeof MESSAGE.RUN_CLEAR }
   | { type: typeof MESSAGE.RUN_DONE; run: Run }
   | { type: typeof MESSAGE.TASKS_GET }
-  | { type: typeof MESSAGE.TASKS_SEEN }
+  | { type: typeof MESSAGE.TASKS_SEEN; id?: string }
+  | { type: typeof MESSAGE.TASKS_CANCEL; id: string }
   | { type: typeof MESSAGE.TASKS_DELETE; id: string }
   | { type: typeof MESSAGE.TASKS_CLEAR; mode: 'old' | 'all' }
   | { type: typeof MESSAGE.TASKS_CHANGED; tasks: Task[]; finished?: Task }
@@ -374,4 +443,5 @@ export type WebButlerMessage =
       extension: SiteExtension;
       reason: string;
     }
-  | { type: typeof MESSAGE.USER_SCRIPTS_SETTINGS_OPEN };
+  | { type: typeof MESSAGE.USER_SCRIPTS_SETTINGS_OPEN }
+  | { type: typeof MESSAGE.BROWSER_CURSOR; cursor: CursorCommand };

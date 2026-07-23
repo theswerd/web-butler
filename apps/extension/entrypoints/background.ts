@@ -5,8 +5,12 @@ import {
   DEFAULT_SHELL_PERSIST,
   MESSAGE,
   TOGGLE_COMMAND,
+  type BrowserAction,
+  type BrowserActionResult,
+  type CursorCommand,
   type ExtensionHealth,
   type ExtensionsState,
+  type OpenTab,
   type PageContext,
   type PanelState,
   type ProviderAuth,
@@ -49,6 +53,7 @@ import {
   syncRegistrations,
   userScriptsAvailable,
 } from '../lib/user-scripts';
+import { detachTab, performAction } from '../lib/browser-control';
 
 /** Per-tab shell UI state for the current browser session. */
 const shellByTab = storage.defineItem<Record<string, ShellPersist>>(
@@ -212,6 +217,40 @@ async function untrackTask(id: string) {
 }
 
 /**
+ * A follow-up message lands on an existing task: flip it back to running
+ * (a settled one is being continued; a running one just got guidance) and
+ * record the user's words in its activity feed, where the side panel and
+ * the chips' live line pick them up.
+ */
+async function reopenTask(task: Task, followUpPrompt: string) {
+  const tasks = (await tasksItem.getValue()).map((entry) =>
+    entry.id === task.id
+      ? {
+          ...entry,
+          status: 'running' as const,
+          finishedAt: undefined,
+          seen: true,
+          activity: undefined,
+        }
+      : entry,
+  );
+  await tasksItem.setValue(tasks);
+  await broadcast({ type: MESSAGE.TASKS_CHANGED, tasks });
+
+  const all = await taskUpdatesItem.getValue();
+  const feed = [
+    ...(all[task.id] ?? []),
+    { at: Date.now(), kind: 'user' as const, text: followUpPrompt },
+  ];
+  await taskUpdatesItem.setValue({
+    ...all,
+    [task.id]: feed.slice(-TASK_UPDATES_MAX),
+  });
+  const focus = await panelFocusItem.getValue();
+  if (focus.kind === 'task' && focus.taskId === task.id) void notifyPanel();
+}
+
+/**
  * User-initiated trashing (one row or a bulk clear): keep only what the
  * predicate passes, drop the orphaned activity feeds, tell every tab, and
  * refresh a side panel that was watching a now-gone task (panelState
@@ -237,6 +276,10 @@ async function removeTasks(keep: (task: Task) => boolean) {
  * `finished` — the cross-tab toast — and leaves it unseen so badges show
  * it. Tab-scoped completions skip that: their answer renders in-page,
  * right where the user is looking.
+ *
+ * First settle wins: with several runs in flight, a task can be raced by
+ * its executor finishing and the user cancelling — whichever lands first
+ * is the truth, and the loser must not overwrite it.
  */
 async function settleTask(
   id: string,
@@ -246,10 +289,12 @@ async function settleTask(
   const tasks = await tasksItem.getValue();
   const index = tasks.findIndex((task) => task.id === id);
   if (index === -1) return;
+  if (tasks[index].status !== 'running') return; // already settled — first wins
   const settled: Task = {
     ...tasks[index],
     finishedAt: Date.now(),
     seen: !announce,
+    activity: undefined, // the live "doing X" line dies with the run
     ...patch,
   };
   const next = [...tasks];
@@ -265,9 +310,45 @@ async function settleTask(
     tasks: next,
     finished: announce ? settled : undefined,
   });
+  // When the user isn't looking at a shell, the in-page toast is invisible
+  // — an OS notification carries the completion instead.
+  if (settled.status === 'done' || settled.status === 'failed') {
+    void maybeNotifyFinished(settled);
+  }
   // A side panel watching this task live sees the status flip in place.
   const focus = await panelFocusItem.getValue();
   if (focus.kind === 'task' && focus.taskId === id) void notifyPanel();
+}
+
+/**
+ * OS notification for a finished task — only when no shell is showing it:
+ * the user's current tab either can't host the shell (chrome:// pages, the
+ * web store) or has it collapsed. Tabs with an open shell already toast.
+ */
+async function maybeNotifyFinished(task: Task) {
+  try {
+    const [active] = await browser.tabs.query({
+      active: true,
+      lastFocusedWindow: true,
+    });
+    const hasShell = /^https?:/.test(active?.url ?? '');
+    if (hasShell && active?.id != null) {
+      const shell = (await shellByTab.getValue())[tabKey(active.id)];
+      // Default shell mode is open — only an explicit collapse silences
+      // the in-page surfaces enough to need the OS to speak up.
+      if ((shell?.mode ?? 'open') === 'open') return;
+    }
+    await browser.notifications.create(`wb-task:${task.id}`, {
+      type: 'basic',
+      iconUrl: browser.runtime.getURL('/icon/128.png'),
+      title:
+        task.status === 'done' ? 'Web Butler finished a task' : 'Web Butler task failed',
+      message: task.outcome ?? task.prompt,
+      contextMessage: task.prompt.length > 60 ? `${task.prompt.slice(0, 57)}…` : task.prompt,
+    });
+  } catch {
+    // Notifications denied/unavailable — the task list still has it.
+  }
 }
 
 /**
@@ -650,8 +731,81 @@ async function appendTaskUpdate(
     ...all,
     [taskId]: feed.slice(-TASK_UPDATES_MAX),
   });
+  // The feed's newest line doubles as the task's "doing X right now" —
+  // surfaced on the chips in every tab (throttled; chunks are chatty).
+  const line = feed[feed.length - 1];
+  queueActivity(taskId, `${line.kind === 'thought' ? '· ' : ''}${line.text}`);
   const focus = await panelFocusItem.getValue();
   if (focus.kind === 'task' && focus.taskId === taskId) void notifyPanel();
+}
+
+/**
+ * Mirror the latest feed line into Task.activity and broadcast — at most
+ * every ~600ms per burst. Message/thought chunks arrive many times a
+ * second; broadcasting each would spam every tab's React tree.
+ */
+const pendingActivity = new Map<string, string>();
+let activityFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function queueActivity(taskId: string, text: string) {
+  pendingActivity.set(taskId, text.trim().slice(0, 200));
+  activityFlushTimer ??= setTimeout(() => {
+    activityFlushTimer = null;
+    void flushActivity();
+  }, 600);
+}
+
+async function flushActivity() {
+  if (pendingActivity.size === 0) return;
+  const latest = new Map(pendingActivity);
+  pendingActivity.clear();
+  const tasks = await tasksItem.getValue();
+  let changed = false;
+  const next = tasks.map((task) => {
+    const activity = latest.get(task.id);
+    // Only running rows carry a live line — a settle that raced this
+    // flush must not get a stale "doing X" stamped onto it.
+    if (activity == null || task.status !== 'running') return task;
+    changed = true;
+    return { ...task, activity };
+  });
+  if (!changed) return;
+  await tasksItem.setValue(next);
+  await broadcast({ type: MESSAGE.TASKS_CHANGED, tasks: next });
+}
+
+/**
+ * Cancel handles for in-flight turns, keyed by task id. A task can have
+ * more than one turn in flight (a follow-up queued onto a running task),
+ * hence a set. In-memory on purpose: the controllers die with the service
+ * worker, and the startup orphan sweep settles whatever they were driving.
+ */
+const runAborts = new Map<string, Set<AbortController>>();
+
+function trackAbort(taskId: string, abort: AbortController) {
+  const set = runAborts.get(taskId) ?? new Set();
+  set.add(abort);
+  runAborts.set(taskId, set);
+}
+
+function untrackAbort(taskId: string, abort: AbortController) {
+  const set = runAborts.get(taskId);
+  set?.delete(abort);
+  if (set?.size === 0) runAborts.delete(taskId);
+}
+
+/** True while another turn for this task is still executing — that turn
+    gets to settle the task; this one should leave the row running. */
+function taskHasLiveTurn(taskId: string): boolean {
+  return (runAborts.get(taskId)?.size ?? 0) > 0;
+}
+
+/** Stop a running task: abort every in-flight turn (which cancels the
+    agent on the VM through the request signal) and settle it as stopped
+    right away — first settle wins, so the executors' settles no-op. */
+async function cancelTask(id: string) {
+  for (const abort of runAborts.get(id) ?? []) abort.abort();
+  await settleTask(id, { status: 'stopped', outcome: 'Stopped by you' });
 }
 
 async function saveRun(run: Run) {
@@ -800,18 +954,97 @@ async function publishArtifact(
 }
 
 /**
+ * The user's open tabs across all normal windows, active one first-classed.
+ * Rides along with every prompt as envelope context and as the stage the
+ * agent's browser control acts on. Best-effort: never blocks a run.
+ */
+async function gatherOpenTabs(activeTabId: number): Promise<OpenTab[]> {
+  try {
+    const tabs = await browser.tabs.query({});
+    return tabs
+      .filter((tab): tab is typeof tab & { id: number } => tab.id != null)
+      .filter((tab) => /^https?:/.test(tab.url ?? ''))
+      .map((tab) => ({
+        id: tab.id,
+        title: tab.title ?? '',
+        url: tab.url ?? '',
+        // The prompt's origin tab is the one browser control drives.
+        active: tab.id === activeTabId,
+      }))
+      .slice(0, 50);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Build the per-run browser-action handler: the agent's `browser` commands
+ * arrive here, get performed in the run's origin tab with the debugger, and
+ * animate the ghost cursor in that tab. `tabs` is answered directly (it
+ * needs chrome.tabs, not the debugger). Attachment is torn down when the
+ * run settles (see finishBrowserControl).
+ */
+function browserActionHandler(tabId: number) {
+  const relay = (cursor: CursorCommand) => {
+    void browser.tabs
+      .sendMessage(tabId, { type: MESSAGE.BROWSER_CURSOR, cursor })
+      .catch(() => {}); // tab navigated/closed — the cursor just won't show
+  };
+  return async (action: BrowserAction): Promise<BrowserActionResult> => {
+    if (action.kind === 'tabs') {
+      const tabs = await gatherOpenTabs(tabId);
+      const lines = tabs.map(
+        (tab) =>
+          `${tab.id}\t${tab.active ? '* ' : '  '}${tab.title || '(untitled)'}\n\t${tab.url}`,
+      );
+      return { ok: true, data: `Open tabs:\n${lines.join('\n')}` };
+    }
+    return performAction(tabId, action, relay);
+  };
+}
+
+/** Drop the debugger session and clear the ghost cursor when a run ends. */
+async function finishBrowserControl(tabId: number): Promise<void> {
+  await detachTab(tabId);
+  void browser.tabs
+    .sendMessage(tabId, { type: MESSAGE.BROWSER_CURSOR, cursor: { kind: 'hide' } })
+    .catch(() => {});
+}
+
+/**
  * Real completion for a tab-scoped run: one agent turn on the sandbox VM.
  * The agent declares its outcome — a short response renders as the in-page
  * answer; an artifact is published to the side panel with a handoff card
- * in the tab. Stale checks mirror the mock's: a newer prompt wins.
+ * in the tab. Runs are concurrent now: a newer prompt only takes over the
+ * tab's answer SLOT — this run keeps executing, and a displaced result
+ * still settles its task and announces as a toast in every tab.
  */
 async function executeTabRun(run: Run, provider: DeviceAuthProvider, page: PageContext) {
-  const turn = await runAgentPrompt(provider, run.prompt, page, run.id, (update) =>
-    void appendTaskUpdate(run.id, update),
-  );
+  const abort = new AbortController();
+  trackAbort(run.id, abort);
+  const turn = await runAgentPrompt({
+    provider,
+    prompt: run.prompt,
+    page,
+    taskId: run.id,
+    openTabs: await gatherOpenTabs(run.tabId),
+    onUpdate: (update) => void appendTaskUpdate(run.id, update),
+    onAction: browserActionHandler(run.tabId),
+    signal: abort.signal,
+  }).finally(() => {
+    untrackAbort(run.id, abort);
+    void finishBrowserControl(run.tabId);
+  });
 
-  const current = (await runByTab.getValue())[tabKey(run.tabId)];
-  if (current?.id !== run.id) return; // replaced or cleared meanwhile
+  // User cancel: the task was already settled as stopped (cancelTask);
+  // don't render the aborted turn's error as if the run failed.
+  if (abort.signal.aborted) {
+    const current = (await runByTab.getValue())[tabKey(run.tabId)];
+    if (current?.id === run.id && current.status === 'working') {
+      await dropRun(run.tabId);
+    }
+    return;
+  }
 
   let result: RunResult;
   let reportId: string | undefined;
@@ -857,17 +1090,33 @@ async function executeTabRun(run: Run, provider: DeviceAuthProvider, page: PageC
     }
   }
 
+  // Displaced = a newer prompt owns this tab's answer slot now. The task
+  // still settles with its outcome; announcing toasts the result in every
+  // tab so the work isn't silently lost. When a queued follow-up turn is
+  // still executing on this task, the row stays running — the last turn
+  // out settles it.
+  const current = (await runByTab.getValue())[tabKey(run.tabId)];
+  const displaced = current?.id !== run.id;
+
+  if (!taskHasLiveTurn(run.id)) {
+    await settleTask(
+      run.id,
+      {
+        status: 'error' in turn ? 'failed' : 'done',
+        outcome:
+          'error' in turn
+            ? turn.error
+            : (taskLine ?? result.title ?? outcomeSnippet(result.text)),
+        reportId,
+        extensionId,
+      },
+      { announce: displaced },
+    );
+  }
+  if (displaced) return;
+
   const done: Run = { ...run, status: 'done', result };
   await saveRun(done);
-  await settleTask(run.id, {
-    status: 'error' in turn ? 'failed' : 'done',
-    outcome:
-      'error' in turn
-        ? turn.error
-        : (taskLine ?? result.title ?? outcomeSnippet(result.text)),
-    reportId,
-    extensionId,
-  });
   await browser.tabs
     .sendMessage(run.tabId, { type: MESSAGE.RUN_DONE, run: done })
     .catch(() => {}); // origin tab gone — the stored run just expires with it
@@ -884,9 +1133,25 @@ async function executeGlobalRun(
   provider: DeviceAuthProvider,
   page: PageContext,
 ) {
-  const turn = await runAgentPrompt(provider, run.prompt, page, run.id, (update) =>
-    void appendTaskUpdate(run.id, update),
-  );
+  const abort = new AbortController();
+  trackAbort(run.id, abort);
+  const turn = await runAgentPrompt({
+    provider,
+    prompt: run.prompt,
+    page,
+    taskId: run.id,
+    openTabs: await gatherOpenTabs(run.tabId),
+    onUpdate: (update) => void appendTaskUpdate(run.id, update),
+    onAction: browserActionHandler(run.tabId),
+    signal: abort.signal,
+  }).finally(() => {
+    untrackAbort(run.id, abort);
+    void finishBrowserControl(run.tabId);
+  });
+
+  // User cancel — cancelTask already settled the task as stopped. A
+  // queued follow-up still executing keeps the row running for its turn.
+  if (abort.signal.aborted || taskHasLiveTurn(run.id)) return;
 
   if ('error' in turn) {
     await settleTask(
@@ -1234,45 +1499,43 @@ export default defineBackground(() => {
 
       if (message?.type === MESSAGE.RUN_START) {
         return (async (): Promise<RunStartResult> => {
-          const scope = classifyRunScope(message.prompt);
-          const run: Run =
-            scope === 'tab'
-              ? {
-                  id: crypto.randomUUID(),
-                  scope,
-                  tabId,
-                  url: message.page.url,
-                  prompt: message.prompt,
-                  status: 'working',
-                  startedAt: Date.now(),
-                }
-              : {
-                  // Global: the tab is released immediately — no in-page ack;
-                  // completion arrives later as a finished task, everywhere.
-                  id: crypto.randomUUID(),
-                  scope,
-                  tabId,
-                  url: message.page.url,
-                  prompt: message.prompt,
-                  status: 'delegated',
-                  startedAt: Date.now(),
-                };
+          // Follow-up: the message rides into an existing task's agent
+          // session instead of opening a new task. The task goes back to
+          // running; its feed records what the user added.
+          const followUp = message.followUpTaskId
+            ? (await tasksItem.getValue()).find(
+                (task) => task.id === message.followUpTaskId,
+              )
+            : undefined;
 
-          // A newer prompt from this tab supersedes a still-working run:
-          // settle its task as stopped NOW. Its executor's stale check
-          // will skip settling later, so this is the only place that
-          // records the supersede — without it the old task runs forever.
-          // (A 'delegated' entry is just the ack card; its global task is
-          // still executing and settles itself.)
-          const previous = (await runByTab.getValue())[tabKey(tabId)];
-          if (previous && previous.status === 'working') {
-            await settleTask(previous.id, { status: 'stopped' });
-          }
+          const scope = followUp
+            ? followUp.scope
+            : classifyRunScope(message.prompt);
+          const run: Run = {
+            // A follow-up reuses the task's id — same settle, same feed,
+            // and the server routes it to the same agent session.
+            id: followUp?.id ?? crypto.randomUUID(),
+            scope,
+            tabId,
+            url: message.page.url,
+            prompt: message.prompt,
+            // Global: the tab is released immediately — no in-page ack;
+            // completion arrives later as a finished task, everywhere.
+            status: scope === 'tab' ? 'working' : 'delegated',
+            startedAt: Date.now(),
+          };
 
-          // Optimistic: the task is in every tab's list before the (slow)
-          // auth check. A rejection below rolls it back.
+          // Runs are concurrent: a previous run from this tab keeps
+          // executing — it only loses the answer slot (its result will
+          // announce as a toast instead of landing in-place).
           await saveRun(run);
-          await trackTask(run);
+          if (followUp) {
+            await reopenTask(followUp, message.prompt);
+          } else {
+            // Optimistic: the task is in every tab's list before the
+            // (slow) auth check. A rejection below rolls it back.
+            await trackTask(run);
+          }
 
           // Route to the active provider from settings; if it isn't
           // connected, any other connected provider still runs the task.
@@ -1299,7 +1562,16 @@ export default defineBackground(() => {
               }
             }
             if (!provider) {
-              await untrackTask(run.id);
+              // Roll the optimism back. A rejected follow-up settles its
+              // reopened task instead of deleting the history row.
+              if (followUp) {
+                await settleTask(run.id, {
+                  status: followUp.status === 'running' ? 'stopped' : followUp.status,
+                  outcome: followUp.outcome,
+                });
+              } else {
+                await untrackTask(run.id);
+              }
               await dropRun(run.tabId);
               // The gate card defaults to the ChatGPT flow, so report codex.
               return { authRequired: true, auth: codexAuth };
@@ -1307,7 +1579,20 @@ export default defineBackground(() => {
           }
 
           // The run will really execute — now it's history worth keeping.
-          void syncTask(taskFor(run));
+          if (!followUp) void syncTask(taskFor(run));
+
+          // A follow-up's turn carries a marker with the original ask: if
+          // the task's agent session is still alive this is harmless
+          // context; if it was reaped (idle bridges close after a few
+          // minutes) it's what re-anchors the fresh session.
+          const turnRun: Run = followUp
+            ? {
+                ...run,
+                prompt:
+                  `(Follow-up to your earlier task: "${followUp.prompt.slice(0, 140)}")` +
+                  `\n\n${run.prompt}`,
+              }
+            : run;
 
           if (provider) {
             // Real run: one ACP turn against the agent CLI on the VM. The
@@ -1315,8 +1600,8 @@ export default defineBackground(() => {
             // (an HTML snapshot is too big for session storage to keep).
             // guardRun settles the task if the executor itself crashes.
             if (scope === 'tab')
-              guardRun(run, executeTabRun(run, provider, message.page));
-            else guardRun(run, executeGlobalRun(run, provider, message.page));
+              guardRun(run, executeTabRun(turnRun, provider, message.page));
+            else guardRun(run, executeGlobalRun(turnRun, provider, message.page));
           } else {
             // Dev bypass: canned fixture answers, no VM involved.
             if (scope === 'tab') scheduleTabRun(run);
@@ -1334,9 +1619,12 @@ export default defineBackground(() => {
 
       if (message?.type === MESSAGE.RUN_CLEAR) {
         return (async () => {
-          // Dismissing a still-working run is a stop — record it as such.
+          // Dismissing a still-working run is a stop — cancel the actual
+          // turn, not just the bookkeeping. A finished answer just clears.
           const current = (await runByTab.getValue())[tabKey(tabId)];
-          if (current && current.status !== 'done') {
+          if (current && current.status === 'working') {
+            await cancelTask(current.id);
+          } else if (current && current.status !== 'done') {
             await settleTask(current.id, { status: 'stopped' });
           }
           await dropRun(tabId);
@@ -1418,15 +1706,23 @@ export default defineBackground(() => {
 
       if (message?.type === MESSAGE.TASKS_SEEN) {
         return tasksItem.getValue().then(async (tasks) => {
-          if (tasks.every((task) => task.seen)) return;
+          // With an id: just that task (its chip was dismissed from the
+          // strip). Without: everything (the Tasks view was opened).
+          const affected = (task: Task) =>
+            !task.seen && (message.id == null || task.id === message.id);
+          if (!tasks.some(affected)) return;
           const next = tasks.map((task) =>
-            task.seen ? task : { ...task, seen: true },
+            affected(task) ? { ...task, seen: true } : task,
           );
           await tasksItem.setValue(next);
-          void syncTasksSeen();
+          if (message.id == null) void syncTasksSeen();
           // Sync badges in every other tab too.
           await broadcast({ type: MESSAGE.TASKS_CHANGED, tasks: next });
         });
+      }
+
+      if (message?.type === MESSAGE.TASKS_CANCEL) {
+        return cancelTask(message.id);
       }
 
       if (message?.type === MESSAGE.SIDE_PANEL_OPEN) {
@@ -1474,5 +1770,21 @@ export default defineBackground(() => {
       return shellByTab.setValue(rest);
     });
     void dropRun(tabId);
+  });
+
+  // Clicking a finished-task notification brings the user back: focus the
+  // current window's active tab and open the shell there — the unseen
+  // badge and the task strip take it from there.
+  browser.notifications?.onClicked.addListener((notificationId) => {
+    if (!notificationId.startsWith('wb-task:')) return;
+    void browser.notifications.clear(notificationId);
+    void browser.tabs
+      .query({ active: true, lastFocusedWindow: true })
+      .then(([active]) => {
+        if (active?.id == null || !/^https?:/.test(active.url ?? '')) return;
+        return browser.tabs
+          .sendMessage(active.id, { type: MESSAGE.SET_OPEN, open: true })
+          .catch(() => {});
+      });
   });
 });

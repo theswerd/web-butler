@@ -2,6 +2,13 @@ import './env';
 import { getFreestyle } from './freestyle';
 import type { PtySession } from 'freestyle';
 import { EXTENSION_SKILL, SKILL_PATH } from './extension-skill';
+import {
+  ACTIONS_DIR,
+  BROWSER_CLI,
+  BROWSER_CLI_PATH,
+  BROWSER_SKILL_PATH,
+  BROWSER_TOOL_SKILL,
+} from './browser-tool';
 
 /**
  * Generic ACP (Agent Client Protocol) bridge to the agent CLIs on a user's
@@ -17,9 +24,11 @@ import { EXTENSION_SKILL, SKILL_PATH } from './extension-skill';
  * agents' human-readable log lines land on the same stream and are
  * filtered out by the parser.
  *
- * One bridge per (vm, provider), kept alive between prompts so a session
- * carries conversation context across messages. Idle bridges are reaped so
- * a held websocket doesn't keep a VM billable forever.
+ * One bridge per (vm, provider, task), kept alive between prompts so each
+ * task's session carries its own conversation context across follow-up
+ * messages — and so several tasks can run turns at the same time, each in
+ * its own agent process. Idle bridges are reaped so a held websocket
+ * doesn't keep a VM billable forever.
  */
 
 export type AcpProvider = 'codex' | 'grok' | 'claude';
@@ -44,21 +53,33 @@ export { WORKSPACE_DIR };
  * the page-extension authoring skill (extension-skill.ts).
  */
 const PREP_DIRS =
-  `${WORKSPACE_DIR} ${WORKSPACE_DIR}/.butler ` +
-  `${WORKSPACE_DIR}/skills/page-extension`;
+  `${WORKSPACE_DIR} ${WORKSPACE_DIR}/.butler ${ACTIONS_DIR} ` +
+  `${WORKSPACE_DIR}/skills/page-extension ` +
+  `${WORKSPACE_DIR}/skills/browser-control`;
 
 /**
  * The shell line that becomes the agent process. `stty raw -echo` first:
  * raw mode stops the PTY from translating newlines, no-echo stops it from
  * mirroring our writes. (The PTY API rejects `exec` strings with quotes,
  * so the bootstrap is written to the shell instead.)
+ *
+ * WB_ACTIONS_DIR: each task's agent gets its own browser-action mailbox
+ * (the `browser` CLI inherits the env). Without it, two concurrent tasks
+ * would drain each other's actions into the wrong tab.
  */
-const BOOTSTRAPS: Record<AcpProvider, string> = {
-  grok: 'stty raw -echo; exec grok --no-auto-update agent stdio\n',
+const AGENT_COMMANDS: Record<AcpProvider, string> = {
+  grok: 'exec grok --no-auto-update agent stdio',
   // NO_BROWSER: the adapter must not advertise browser-based auth on a VM.
-  codex: 'stty raw -echo; export NO_BROWSER=1; exec codex-acp\n',
-  claude: 'stty raw -echo; exec claude-agent-acp\n',
+  codex: 'export NO_BROWSER=1; exec codex-acp',
+  claude: 'exec claude-agent-acp',
 };
+
+function bootstrapFor(provider: AcpProvider, actionsDir: string): string {
+  return (
+    `stty raw -echo; export WB_ACTIONS_DIR=${actionsDir}; ` +
+    `mkdir -p ${actionsDir}; ${AGENT_COMMANDS[provider]}\n`
+  );
+}
 
 /**
  * Codex and Claude need their ACP adapters installed. Newer snapshots bake
@@ -102,6 +123,8 @@ class AcpBridge {
   constructor(
     private readonly vmId: string,
     private readonly provider: AcpProvider,
+    /** This task's private browser-action mailbox on the VM. */
+    readonly actionsDir: string,
   ) {}
 
   /**
@@ -116,7 +139,10 @@ class AcpBridge {
   /**
    * Run one prompt turn. Updates stream to `onUpdate` as the agent works;
    * resolves with the stop reason when the turn ends. A turn already in
-   * flight is cancelled first — a newer prompt always wins.
+   * flight is NOT cancelled — this bridge is one task's conversation, so a
+   * newer message is a follow-up and queues behind the current turn (the
+   * user adding guidance mid-task shouldn't kill the work in progress).
+   * Cancellation is explicit: the caller's `signal`, or cancel().
    */
   async prompt(
     text: string,
@@ -125,9 +151,12 @@ class AcpBridge {
   ): Promise<AcpTurn> {
     this.lastUsedAt = Date.now();
 
-    if (this.activeTurn) {
-      this.notify('session/cancel', { sessionId: this.acpSessionId });
+    // Queue: each waiter re-checks, so back-to-back follow-ups run in
+    // arrival order (near enough — exact FIFO doesn't matter here).
+    while (this.activeTurn) {
       await this.activeTurn.catch(() => {});
+      // A follow-up that was aborted while waiting shouldn't still run.
+      if (signal?.aborted) throw new Error('turn cancelled');
     }
 
     const turn = this.runTurn(text, onUpdate, signal).finally(() => {
@@ -137,6 +166,13 @@ class AcpBridge {
     });
     this.activeTurn = turn;
     return turn;
+  }
+
+  /** Cancel the in-flight turn (the user hit stop on this task). */
+  cancel() {
+    if (this.acpSessionId) {
+      this.notify('session/cancel', { sessionId: this.acpSessionId });
+    }
   }
 
   private async runTurn(
@@ -236,9 +272,20 @@ class AcpBridge {
     }
     if (lastError) throw lastError instanceof Error ? lastError : new Error(String(lastError));
 
-    // The page-extension authoring contract, where the briefing points.
-    // Overwritten every boot so contract updates reach existing VMs.
-    await vm.fs.writeTextFile(SKILL_PATH, EXTENSION_SKILL);
+    // The authoring contracts + browser CLI, where the briefing points.
+    // Overwritten every boot so updates reach existing VMs. The CLI is
+    // symlinked onto PATH and made executable so the agent runs `browser`.
+    await Promise.all([
+      vm.fs.writeTextFile(SKILL_PATH, EXTENSION_SKILL),
+      vm.fs.writeTextFile(BROWSER_SKILL_PATH, BROWSER_TOOL_SKILL),
+      vm.fs.writeTextFile(BROWSER_CLI_PATH, BROWSER_CLI),
+    ]);
+    await vm.exec({
+      command:
+        `chmod +x ${BROWSER_CLI_PATH} && ` +
+        `ln -sf ${BROWSER_CLI_PATH} /usr/local/bin/browser`,
+      timeoutMs: 30_000,
+    });
 
     this.session = await vm.pty.open({
       // Wide so the PTY never wraps a JSON frame across "screen" lines.
@@ -249,7 +296,7 @@ class AcpBridge {
       onClose: () => this.close(),
       onError: () => this.close(),
     });
-    this.session.write(BOOTSTRAPS[this.provider]);
+    this.session.write(bootstrapFor(this.provider, this.actionsDir));
 
     const init = await this.call('initialize', {
       protocolVersion: 1,
@@ -385,11 +432,23 @@ class AcpBridge {
 
 const bridges = new Map<string, AcpBridge>();
 
-export function getAcpBridge(vmId: string, provider: AcpProvider): AcpBridge {
-  const key = `${vmId}:${provider}`;
+/**
+ * The bridge for one task's conversation. Same (vm, provider, task) →
+ * same agent process and ACP session, so follow-up messages land with the
+ * task's full context; different tasks get their own process and can run
+ * concurrently. Task ids are client-supplied — sanitized here because the
+ * id becomes a directory name on the VM.
+ */
+export function getAcpBridge(
+  vmId: string,
+  provider: AcpProvider,
+  taskId?: string,
+): AcpBridge {
+  const safeTask = (taskId ?? 'default').replace(/[^a-zA-Z0-9_-]/g, '') || 'default';
+  const key = `${vmId}:${provider}:${safeTask}`;
   let bridge = bridges.get(key);
   if (!bridge) {
-    bridge = new AcpBridge(vmId, provider);
+    bridge = new AcpBridge(vmId, provider, `${ACTIONS_DIR}/${safeTask}`);
     bridges.set(key, bridge);
   }
   return bridge;

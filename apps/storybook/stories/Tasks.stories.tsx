@@ -2,9 +2,11 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import {
   DEFAULT_SETTINGS,
   MenuPanel,
+  TaskStrip,
   TaskToast,
   TasksView,
   type Settings,
+  type SiteExtension,
   type Task,
   type ViewId,
 } from '@web-butler/ui';
@@ -35,6 +37,7 @@ const SAMPLE_TASKS: Task[] = [
     status: 'running',
     startedAt: now - 90 * 1000,
     seen: true,
+    activity: 'Reading acme.com/pricing',
   },
   {
     id: 't2',
@@ -103,6 +106,48 @@ const SAMPLE_TASKS: Task[] = [
   },
 ];
 
+// Installed extensions behind the t4b row's puzzle chip — clicking it
+// must land on Extensions with "Cookie banner hider" (e1) flashed, not
+// just the view.
+const SAMPLE_EXTENSIONS: SiteExtension[] = [
+  {
+    id: 'e0',
+    name: 'Rainbow post titles',
+    description: 'Cycles post titles through rainbow colors on the blog.',
+    urlPatterns: ['*://example.com/blog*'],
+    script: '',
+    stage: 'document_idle',
+    version: 1,
+    enabled: true,
+    createdAt: now - 60 * 60 * 1000,
+    updatedAt: now - 60 * 60 * 1000,
+  },
+  {
+    id: 'e1',
+    name: 'Cookie banner hider',
+    description: 'Hides the cookie consent banner on example.com.',
+    urlPatterns: ['*://example.com/*'],
+    script: '',
+    stage: 'document_idle',
+    version: 1,
+    enabled: true,
+    createdAt: now - 44 * 60 * 1000,
+    updatedAt: now - 44 * 60 * 1000,
+  },
+  {
+    id: 'e2',
+    name: 'Hide profile images',
+    description: 'Hides avatars across the forum.',
+    urlPatterns: ['*://forum.example.com/*'],
+    script: '',
+    stage: 'document_idle',
+    version: 1,
+    enabled: false,
+    createdAt: now - 2 * 60 * 60 * 1000,
+    updatedAt: now - 2 * 60 * 60 * 1000,
+  },
+];
+
 export const ListInMenu: Story = {
   render: () => <MenuWithTasks />,
 };
@@ -135,6 +180,10 @@ function MenuWithTasks() {
               : [],
           )
         }
+        extensionsState={{
+          extensions: SAMPLE_EXTENSIONS,
+          userScriptsAvailable: true,
+        }}
       />
     </div>
   );
@@ -162,6 +211,89 @@ export const Toast: Story = {
     </div>
   ),
 };
+
+// The compact per-task rows that dock with the prompt box: one running
+// with a live activity line, one selected (the next message replies to
+// it), one failed, one finished but not yet seen. Clicking a row body
+// toggles the reference; stop/dismiss mutate the list like the shell.
+const STRIP_TASKS: Task[] = [
+  {
+    id: 's1',
+    scope: 'global',
+    prompt: 'research the top 3 competitors and summarize their pricing',
+    url: 'https://example.com',
+    status: 'running',
+    startedAt: now - 90 * 1000,
+    seen: true,
+    activity: 'Reading acme.com/pricing',
+  },
+  {
+    id: 's2',
+    scope: 'tab',
+    prompt: 'draft an email to Priya about the Acme findings',
+    url: 'https://example.com',
+    status: 'running',
+    startedAt: now - 30 * 1000,
+    seen: true,
+    activity: 'Writing the draft',
+  },
+  {
+    id: 's3',
+    scope: 'global',
+    prompt: 'watch this page and tell me when the price drops below $200',
+    url: 'https://example.com/product',
+    status: 'failed',
+    startedAt: now - 4 * 60 * 1000,
+    finishedAt: now - 60 * 1000,
+    outcome: 'Provider is not signed in on the sandbox',
+    seen: true,
+  },
+  {
+    id: 's4',
+    scope: 'tab',
+    prompt: 'summarize this article',
+    url: 'https://example.com/blog',
+    status: 'done',
+    startedAt: now - 8 * 60 * 1000,
+    finishedAt: now - 2 * 60 * 1000,
+    outcome: 'The article argues the pricing change is defensive.',
+    seen: false,
+  },
+];
+
+export const Strip: Story = {
+  render: () => <StripDemo />,
+};
+
+function StripDemo() {
+  const [tasks, setTasks] = useState<Task[]>(STRIP_TASKS);
+  // s2 starts referenced, matching the "replying to this task" state.
+  const [selectedId, setSelectedId] = useState<string | null>('s2');
+  return (
+    <div style={{ width: 560 }}>
+      <TaskStrip
+        tasks={tasks}
+        selectedId={selectedId}
+        onSelect={(task) =>
+          setSelectedId((current) => (current === task.id ? null : task.id))
+        }
+        onOpen={(task) => console.log('open transcript', task.id)}
+        onCancel={(task) =>
+          setTasks((current) =>
+            current.map((row) =>
+              row.id === task.id
+                ? { ...row, status: 'stopped', finishedAt: Date.now() }
+                : row,
+            ),
+          )
+        }
+        onDismiss={(task) =>
+          setTasks((current) => current.filter((row) => row.id !== task.id))
+        }
+      />
+    </div>
+  );
+}
 
 export const FailedToast: Story = {
   render: () => (

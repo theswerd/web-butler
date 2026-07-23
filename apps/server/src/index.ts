@@ -12,14 +12,21 @@ import { getAcpBridge } from './acp';
 import {
   BUTLER_BRIEFING,
   buildTurnMessage,
+  extensionClaimRetryMessage,
   extensionProblem,
   extensionStageSchema,
   matchesPattern,
   newOutcomePath,
+  outcomeRetryMessage,
   pageContextSchema,
   readOutcomes,
   type Outcome,
 } from './butler';
+import {
+  awaitBrowserAction,
+  drainActions,
+  resolveBrowserAction,
+} from './browser-tool';
 import {
   getClaudeAuthStatus,
   startClaudeLogin,
@@ -1072,6 +1079,88 @@ async function storeExtensionOutcomes(
   return processed;
 }
 
+// ---------------------------------------------------------------------------
+// Claim-vs-outcome consistency. An agent that SAYS "I installed an
+// extension" without declaring one in its outcome file leaves the user
+// with a confident claim and nothing behind it. The detector is a
+// heuristic on purpose: a false positive costs one corrective turn or a
+// visible warning, a false negative costs the user an extension that
+// silently never existed.
+// ---------------------------------------------------------------------------
+
+/** A completed-sounding verb near "extension", either order, within one
+    sentence. Past-tense forms only, so instructions like "you can create
+    an extension by..." don't read as claims. */
+const EXTENSION_CLAIM =
+  /\b(?:installed|created|updated|added|saved|registered|set\s+up)\b[^.!?\n]{0,60}\bextensions?\b|\bextensions?\b[^.!?\n]{0,60}\b(?:installed|created|updated|added|saved|registered|set\s+up)\b/gi;
+
+/** Words that turn a matched mention into an honest admission ("I could
+    not install the extension"). Pushing back on those would punish the
+    agent for telling the truth. */
+const CLAIM_NEGATION =
+  /\b(?:not|no|never|none|unable|cannot|can't|couldn't|didn't|wasn't|hasn't|haven't|won't|fail\w*|instead|without)\b/i;
+
+/**
+ * True when the turn produced no extension outcome but its text still
+ * asserts one was installed, created, or updated. `reply` carries the
+ * streamed assistant text for the first pass; the post-retry pass omits
+ * it, because a retry can rewrite the outcome but never the stream.
+ */
+function claimsExtensionWithoutOutcome(
+  outcomes: Outcome[],
+  reply = '',
+): boolean {
+  if (outcomes.some((outcome) => outcome.type === 'extension')) return false;
+  const texts = [
+    reply,
+    ...outcomes.flatMap((outcome) =>
+      outcome.type === 'response' || outcome.type === 'artifact'
+        ? [outcome.markdown]
+        : [],
+    ),
+  ];
+  return texts.some((text) =>
+    [...text.matchAll(EXTENSION_CLAIM)].some((match) => {
+      // The negation often sits just before the matched window ("No
+      // extension was installed"), so scan a short same-sentence
+      // look-behind together with the match itself.
+      const lead =
+        text
+          .slice(Math.max(0, match.index - 40), match.index)
+          .split(/[.!?\n]/)
+          .pop() ?? '';
+      return !CLAIM_NEGATION.test(lead + match[0]);
+    }),
+  );
+}
+
+const EXTENSION_CLAIM_WARNING =
+  '**Warning:** this reply mentions an installed extension, but no ' +
+  'extension was actually saved. Nothing persistent was created. Try ' +
+  'asking again.';
+
+/** Pin the warning onto the response outcome (or add one) so the unbacked
+    claim never reaches the user looking like a success. */
+function withExtensionClaimWarning(outcomes: Outcome[]): Outcome[] {
+  let appended = false;
+  const flagged = outcomes.map((outcome): Outcome => {
+    if (outcome.type !== 'response' || appended) return outcome;
+    appended = true;
+    return {
+      ...outcome,
+      markdown: `${outcome.markdown}\n\n${EXTENSION_CLAIM_WARNING}`,
+    };
+  });
+  if (!appended) {
+    flagged.push({ type: 'response', markdown: EXTENSION_CLAIM_WARNING });
+  }
+  return flagged;
+}
+
+/** How long the server waits for the extension to perform one action
+    before telling the CLI it timed out. Well under the CLI's own 60s. */
+const ACTION_TIMEOUT_MS = 45_000;
+
 const agentPromptSchema = z.object({
   provider: z.enum(['codex', 'grok', 'claude']),
   prompt: z.string().min(1),
@@ -1079,6 +1168,18 @@ const agentPromptSchema = z.object({
   page: pageContextSchema.optional(),
   /** The run's task id — provenance for extensions authored this turn. */
   taskId: z.string().optional(),
+  /** The user's open tabs at send time — envelope context + browser-control
+      stage. Capped so a hostile client can't bloat the turn. */
+  openTabs: z
+    .array(
+      z.object({
+        title: z.string().max(300),
+        url: z.string().max(2000),
+        active: z.boolean(),
+      }),
+    )
+    .max(50)
+    .optional(),
 });
 
 /**
@@ -1124,7 +1225,7 @@ app.post(
     if (!body.success) {
       return c.json({ error: 'provider and prompt are required' }, 400);
     }
-    const { provider, prompt, page, taskId } = body.data;
+    const { provider, prompt, page, taskId, openTabs } = body.data;
     const vmId = result.vmId;
     const userId = result.userId;
 
@@ -1155,7 +1256,10 @@ app.post(
     const clip = (text: string, max: number) =>
       text.length > max ? `${text.slice(0, max - 3)}…` : text;
 
-    const bridge = getAcpBridge(vmId, provider);
+    // One bridge per task: its own agent process and session, so tasks run
+    // concurrently and a follow-up prompt with the same taskId lands in the
+    // conversation that already has the context.
+    const bridge = getAcpBridge(vmId, provider, taskId);
     bridge.setPreamble(BUTLER_BRIEFING);
     const outcomePath = newOutcomePath();
     const text = buildTurnMessage(prompt, page, outcomePath, {
@@ -1187,6 +1291,11 @@ app.post(
         finishedAt: row.finishedAt ?? undefined,
         url: row.url,
       })),
+      openTabs: openTabs?.map((tab) => ({
+        title: clip(tab.title, 120),
+        url: tab.url,
+        active: tab.active,
+      })),
     });
 
     const stream = new ReadableStream<Uint8Array>({
@@ -1205,6 +1314,27 @@ app.post(
         // make silence abnormal, so the extension can time out a truly
         // stuck connection; its line parser ignores them.
         const heartbeat = setInterval(() => line({ ping: true }), 20_000);
+
+        // Browser control: while the turn runs, poll the VM mailbox for
+        // `browser` CLI requests, relay each to the extension as an
+        // {action} line, and let drainActions write the response file that
+        // unblocks the CLI once the extension POSTs its result back. The
+        // extension answers over /api/agent/action-result (resolveBrowser-
+        // Action), not this stream, which is one-directional.
+        const handledActions = new Set<string>();
+        let draining = false;
+        const actionPoll = setInterval(() => {
+          if (draining) return; // don't stack polls if a drain runs long
+          draining = true;
+          void drainActions(vmId, bridge.actionsDir, handledActions, (action) => {
+            line({ action });
+            return awaitBrowserAction(action.id, ACTION_TIMEOUT_MS);
+          })
+            .catch(() => {})
+            .finally(() => {
+              draining = false;
+            });
+        }, 500);
 
         // The reply is assembled server-side from message chunks so the
         // terminal line always carries the full text, even if the client
@@ -1226,13 +1356,85 @@ app.post(
           )
           .then(async ({ stopReason }) => {
             // The agent's structured declaration of what it produced; a
-            // missing/invalid file degrades to the streamed reply text.
+            // missing file degrades to the streamed reply text. A file we
+            // REJECTED gets one corrective turn — the agent already did
+            // the work, it just misdeclared it — and if that fails too,
+            // the fallback says so instead of presenting the streamed
+            // reply as if the declared work landed.
+            let read = await readOutcomes(vmId, outcomePath, reply);
+            // At most ONE corrective turn total, shared between the two
+            // failure modes (rejected file, unbacked extension claim):
+            // stacking them would double the tail latency of a turn that
+            // already went long, for an agent that already fumbled once.
+            let retried = false;
+            if (read.invalid && !c.req.raw.signal.aborted) {
+              retried = true;
+              const retryPath = newOutcomePath();
+              try {
+                await bridge.prompt(
+                  outcomeRetryMessage(read.invalid, retryPath),
+                  (update) => line({ update }),
+                  c.req.raw.signal,
+                );
+                const retry = await readOutcomes(vmId, retryPath, reply);
+                // A retry that wrote no file resolves nothing: keep the
+                // original rejection so the warning below still lands,
+                // instead of quietly presenting the streamed reply.
+                if (!retry.invalid && !retry.fileMissing) read = retry;
+              } catch (error) {
+                console.warn(`[butler] outcome retry failed:`, error);
+              }
+            }
+            if (read.invalid) {
+              read.outcomes = [
+                {
+                  type: 'response',
+                  markdown:
+                    `${reply.trim() || 'Done.'}\n\n` +
+                    `**Warning:** the structured result for this turn was malformed (${read.invalid}), ` +
+                    'so anything it claims to have installed or produced was NOT saved. Try asking again.',
+                },
+              ];
+            } else if (
+              !retried &&
+              !c.req.raw.signal.aborted &&
+              claimsExtensionWithoutOutcome(read.outcomes, reply)
+            ) {
+              // The turn SAYS an extension landed but declared none. Same
+              // one-shot correction as a rejected file: the agent either
+              // backs the claim with the real outcome or retracts it.
+              const retryPath = newOutcomePath();
+              try {
+                await bridge.prompt(
+                  extensionClaimRetryMessage(
+                    retryPath,
+                    read.fileMissing === true,
+                  ),
+                  (update) => line({ update }),
+                  c.req.raw.signal,
+                );
+                const retry = await readOutcomes(vmId, retryPath, reply);
+                // Only an actually-written, valid file can settle the
+                // claim; anything less keeps the original outcomes and
+                // earns the warning below.
+                if (!retry.invalid && !retry.fileMissing) read = retry;
+              } catch (error) {
+                console.warn(`[butler] extension claim retry failed:`, error);
+              }
+              // Re-check the outcomes alone: a successful retry either
+              // added the extension outcome or rewrote the response to
+              // retract the claim. If neither happened, the user must see
+              // that nothing was saved.
+              if (claimsExtensionWithoutOutcome(read.outcomes)) {
+                read.outcomes = withExtensionClaimWarning(read.outcomes);
+              }
+            }
             // Extension outcomes are persisted here, so the terminal line
             // carries stored ids the client can register directly.
             const outcomes = await storeExtensionOutcomes(
               userId,
               taskId,
-              await readOutcomes(vmId, outcomePath, reply),
+              read.outcomes,
             );
             line({ done: true, stopReason, text: reply, outcomes });
           })
@@ -1244,6 +1446,7 @@ app.post(
           })
           .finally(() => {
             clearInterval(heartbeat);
+            clearInterval(actionPoll);
             try {
               controller.close();
             } catch {
@@ -1259,6 +1462,51 @@ app.post(
         'Cache-Control': 'no-cache',
       },
     });
+  },
+);
+
+/**
+ * The extension's answer to one browser action relayed on the prompt
+ * stream. Resolves the promise drainActions is parked on, which then
+ * writes the VM response file that unblocks the `browser` CLI. This is the
+ * return leg the (one-directional) NDJSON stream can't carry.
+ */
+const actionResultSchema = z.object({
+  id: z.string().min(1),
+  result: z.union([
+    z.object({ ok: z.literal(true), data: z.unknown().optional() }),
+    z.object({ ok: z.literal(false), error: z.string() }),
+  ]),
+});
+
+app.post(
+  '/api/agent/action-result',
+  describeRoute({
+    description: "Deliver a browser action's result back to the waiting turn",
+    responses: {
+      200: {
+        description: 'Delivered (or the action was no longer pending)',
+        content: {
+          'application/json': {
+            schema: resolver(z.object({ delivered: z.boolean() })),
+          },
+        },
+      },
+      401: {
+        description: 'No valid session',
+        content: { 'application/json': { schema: resolver(errorSchema) } },
+      },
+    },
+  }),
+  async (c) => {
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    if (!session) return c.json({ error: 'Unauthorized' }, 401);
+    const body = actionResultSchema.safeParse(
+      await c.req.json().catch(() => null),
+    );
+    if (!body.success) return c.json({ error: 'Malformed result' }, 400);
+    const delivered = resolveBrowserAction(body.data.id, body.data.result);
+    return c.json({ delivered });
   },
 );
 

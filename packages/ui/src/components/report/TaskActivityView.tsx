@@ -109,7 +109,7 @@ export function TaskActivityView({
         <h1 className="webbutler:text-[14px] webbutler:leading-snug webbutler:font-semibold webbutler:text-[var(--wc-ink)]">
           {task.prompt}
         </h1>
-        <p className="webbutler:pt-0.5 webbutler:text-[10px] webbutler:text-[var(--wc-text-4)]">
+        <p className="webbutler:pt-0.5 webbutler:text-[10px] webbutler:tabular-nums webbutler:text-[var(--wc-text-4)]">
           {host ? `${host} · ` : ''}
           {task.scope === 'global' ? 'background' : 'this tab'} ·{' '}
           {elapsedLabel(task, now)}
@@ -136,13 +136,23 @@ export function TaskActivityView({
           </p>
         ) : null}
 
-        <div className="webbutler:flex webbutler:flex-col webbutler:gap-2.5">
-          {updates.map((update, index) =>
-            update.kind === 'tool' ? (
+        <div className="webbutler:flex webbutler:flex-col">
+          {updates.map((update, index) => {
+            // Rhythm: runs of tool actions cluster tightly (they're one
+            // burst of work); a change of voice (thought, reply, user
+            // turn) opens a fuller breath of space.
+            const previous = index > 0 ? updates[index - 1].kind : null;
+            const spacing =
+              previous === null
+                ? ''
+                : update.kind === 'tool' && previous === 'tool'
+                  ? 'webbutler:mt-1.5'
+                  : 'webbutler:mt-3';
+            return update.kind === 'tool' ? (
               <div
                 // The feed is append-only, so index keys are stable.
                 key={index}
-                className="webbutler:flex webbutler:items-center webbutler:gap-1.5 webbutler:text-[11px] webbutler:text-[var(--wc-text-3)]"
+                className={`webbutler:flex webbutler:items-center webbutler:gap-1.5 webbutler:text-[11px] webbutler:text-[var(--wc-text-3)] ${spacing}`}
               >
                 <HiOutlineWrenchScrewdriver
                   size={11}
@@ -154,18 +164,29 @@ export function TaskActivityView({
                 </span>
               </div>
             ) : update.kind === 'thought' ? (
+              // Reasoning reads as an aside: dimmest text behind a
+              // hairline rule, clearly not part of the reply.
               <p
                 key={index}
-                className="webbutler:text-[11px] webbutler:leading-relaxed webbutler:text-[var(--wc-text-4)]"
+                className={`webbutler:border-l webbutler:border-[var(--wc-border-hairline)] webbutler:pl-2.5 webbutler:text-[11px] webbutler:leading-relaxed webbutler:text-[var(--wc-text-4)] ${spacing}`}
               >
                 {update.text}
               </p>
+            ) : update.kind === 'user' ? (
+              // A follow-up the user added onto the running task — set off
+              // like a chat bubble so the conversation's turns are legible.
+              <div
+                key={index}
+                className={`webbutler:max-w-[85%] webbutler:self-end webbutler:whitespace-pre-wrap webbutler:break-words webbutler:rounded-2xl webbutler:rounded-br-md webbutler:border webbutler:border-[var(--wc-border-hairline)] webbutler:bg-[var(--wc-hover-1)] webbutler:px-3 webbutler:py-1.5 webbutler:text-[12px] webbutler:leading-relaxed webbutler:text-[var(--wc-ink)] ${spacing}`}
+              >
+                {update.text}
+              </div>
             ) : (
-              <div key={index}>
+              <div key={index} className={spacing}>
                 <MarkdownLite text={update.text} />
               </div>
-            ),
-          )}
+            );
+          })}
         </div>
 
         {/* Settled: the short outcome line, when the reply didn't stream. */}

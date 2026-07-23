@@ -23,8 +23,9 @@ type TasksViewProps = {
   tasks: Task[];
   /** A row's report chip was clicked — the shell opens it in the panel. */
   onOpenReport?: (task: Task) => void;
-  /** A row's extension chip was clicked — jump to the Extensions view. */
-  onOpenExtensions?: () => void;
+  /** A row's extension chip was clicked — jump to the Extensions view
+      with that extension highlighted. */
+  onOpenExtensions?: (extensionId: string) => void;
   /** The row itself was clicked — its transcript opens in the Chrome side
       panel: live while running, a replay once settled. */
   onOpenTask?: (task: Task) => void;
@@ -37,14 +38,21 @@ type TasksViewProps = {
   onClear?: (mode: "old" | "all") => void;
 };
 
-/** The status marker: pulsing while running, tinted once settled. */
+/** The status marker: a soft ping while running, tinted once settled.
+    Sized to sit centered against the row's first (12px) text line. */
 function StatusDot({ task }: { task: Task }) {
   if (task.status === "running") {
     return (
-      <span
-        aria-hidden
-        className="webbutler:mt-[5px] webbutler:size-1.5 webbutler:shrink-0 webbutler:animate-pulse webbutler:rounded-full webbutler:bg-[var(--wc-selection)]"
-      />
+      <span className="webbutler:relative webbutler:flex webbutler:size-1.5">
+        <span
+          aria-hidden
+          className="webbutler:absolute webbutler:inline-flex webbutler:h-full webbutler:w-full webbutler:animate-ping webbutler:rounded-full webbutler:bg-[var(--wc-selection)] webbutler:opacity-50"
+        />
+        <span
+          aria-hidden
+          className="webbutler:relative webbutler:inline-flex webbutler:size-1.5 webbutler:rounded-full webbutler:bg-[var(--wc-selection)]"
+        />
+      </span>
     );
   }
   const tone =
@@ -54,11 +62,11 @@ function StatusDot({ task }: { task: Task }) {
         ? "webbutler:bg-[var(--wc-text-4)]"
         : !task.seen
           ? "webbutler:bg-[var(--wc-selection)]"
-          : "webbutler:bg-transparent";
+          : "webbutler:bg-[var(--wc-border-hairline)]";
   return (
     <span
       aria-hidden
-      className={`webbutler:mt-[5px] webbutler:size-1.5 webbutler:shrink-0 webbutler:rounded-full ${tone}`}
+      className={`webbutler:size-1.5 webbutler:rounded-full ${tone}`}
     />
   );
 }
@@ -66,6 +74,15 @@ function StatusDot({ task }: { task: Task }) {
 /** "This tab" for page questions, "Background" for delegated jobs. */
 function scopeLabel(task: Task): string {
   return task.scope === "global" ? "Background" : "This tab";
+}
+
+/** "example.com" — where the prompt was sent from, for the meta line. */
+function hostLabel(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -117,30 +134,44 @@ export function TasksView({
     // The main area and the trailing controls are separate buttons, so
     // the row itself is a plain container (buttons can't nest).
     const Main = openable ? "button" : "div";
-    const primary =
-      task.status === "running" ? task.prompt : (task.outcome ?? task.prompt);
-    const highlight = task.status === "running" || !task.seen;
+    const isRunning = task.status === "running";
+    const highlight = isRunning || !task.seen;
     const retryable =
       onRetry && (task.status === "failed" || task.status === "stopped");
+    const host = hostLabel(task.url);
+    // The one word of status the outcome line leads with — colored only
+    // when it's bad news, so red stays meaningful.
+    const statusWord =
+      task.status === "failed" ? (
+        <span className="webbutler:font-medium webbutler:text-[#e5484d]">
+          Failed
+        </span>
+      ) : task.status === "stopped" ? (
+        <span className="webbutler:text-[var(--wc-text-4)]">Stopped</span>
+      ) : null;
+    // The living middle line: what it's doing (running) or how it ended.
+    const secondary = isRunning ? (task.activity ?? "Working…") : task.outcome;
     // The output chip: what this task left behind, opened directly.
     const output =
       task.status === "done" && task.reportId && onOpenReport
         ? {
             Icon: HiDocumentText,
-            label: "Open report",
+            label: "Report",
+            title: "Open report",
             onOpen: () => onOpenReport(task),
           }
         : task.status === "done" && task.extensionId && onOpenExtensions
           ? {
               Icon: HiOutlinePuzzlePiece,
-              label: "View extension",
-              onOpen: onOpenExtensions,
+              label: "Extension",
+              title: "View extension",
+              onOpen: () => onOpenExtensions(task.extensionId!),
             }
           : null;
     return (
       <div
         key={task.id}
-        className={`webbutler:group webbutler:flex webbutler:w-full webbutler:items-start webbutler:gap-2 webbutler:px-3 webbutler:py-1.5 ${
+        className={`webbutler:group webbutler:flex webbutler:w-full webbutler:items-start webbutler:gap-2 webbutler:px-3 webbutler:py-2 ${
           openable
             ? "webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-1)]"
             : ""
@@ -153,45 +184,53 @@ export function TasksView({
             openable ? "webbutler:cursor-pointer" : ""
           }`}
         >
-          <span className="webbutler:flex webbutler:w-1.5 webbutler:shrink-0 webbutler:justify-center">
+          {/* Fixed-width status column, dot centered on the first line, so
+              every row's text starts on the same axis. */}
+          <span className="webbutler:flex webbutler:h-4 webbutler:w-2 webbutler:shrink-0 webbutler:items-center webbutler:justify-center">
             <StatusDot task={task} />
           </span>
           <div className="webbutler:min-w-0 webbutler:flex-1">
+            {/* The ask, always first: rows scan by what you asked for. */}
             <p
-              className={`webbutler:truncate webbutler:text-[12px] ${
+              className={`webbutler:truncate webbutler:text-[12px] webbutler:leading-4 ${
                 highlight
                   ? "webbutler:font-medium webbutler:text-[var(--wc-ink)]"
                   : "webbutler:text-[var(--wc-text-2)]"
               }`}
             >
-              {primary}
+              {task.prompt}
             </p>
-            <p className="webbutler:truncate webbutler:text-[10px] webbutler:text-[var(--wc-text-3)]">
+            {/* The outcome (or live activity) as its own quiet line. */}
+            {secondary || statusWord ? (
+              <p className="webbutler:truncate webbutler:pt-px webbutler:text-[11px] webbutler:text-[var(--wc-text-3)]">
+                {statusWord}
+                {statusWord && secondary ? " · " : ""}
+                {secondary}
+              </p>
+            ) : null}
+            <p className="webbutler:truncate webbutler:pt-px webbutler:text-[10px] webbutler:text-[var(--wc-text-4)]">
               {scopeLabel(task)}
-              {task.status === "failed" ? " · failed" : ""}
-              {task.status === "stopped" ? " · stopped" : ""}
-              {/* Finished rows led with the outcome; keep the ask findable. */}
-              {task.status !== "running" && task.outcome
-                ? ` · ${task.prompt}`
-                : ""}
+              {host ? ` · ${host}` : ""}
             </p>
           </div>
         </Main>
         {output ? (
           // Always visible — the deliverable is the row's point, not a
-          // hover secret. Accent while the task is still unseen.
+          // hover secret. A labeled pill so it reads as tappable; accent
+          // while the task is still unseen.
           <button
             type="button"
-            title={output.label}
-            aria-label={`${output.label}: ${task.prompt}`}
+            title={output.title}
+            aria-label={`${output.title}: ${task.prompt}`}
             onClick={output.onOpen}
-            className={`webbutler:flex webbutler:size-4 webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:justify-center webbutler:rounded webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[var(--wc-ink)] ${
+            className={`webbutler:flex webbutler:h-5 webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:gap-1 webbutler:rounded-full webbutler:border webbutler:border-[var(--wc-border-hairline)] webbutler:px-2 webbutler:text-[10px] webbutler:font-medium webbutler:transition-colors webbutler:duration-100 webbutler:hover:border-[var(--wc-border)] webbutler:hover:bg-[var(--wc-hover-1)] webbutler:hover:text-[var(--wc-ink)] ${
               task.seen
                 ? "webbutler:text-[var(--wc-text-3)]"
                 : "webbutler:text-[var(--wc-selection)]"
             }`}
           >
-            <output.Icon size={12} aria-hidden />
+            <output.Icon size={11} aria-hidden />
+            {output.label}
           </button>
         ) : null}
         {retryable ? (
@@ -200,7 +239,7 @@ export function TasksView({
             title="Retry"
             aria-label={`Retry: ${task.prompt}`}
             onClick={() => onRetry(task)}
-            className="webbutler:flex webbutler:size-4 webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:justify-center webbutler:rounded webbutler:text-[var(--wc-text-4)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[var(--wc-ink)]"
+            className="webbutler:flex webbutler:size-5 webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:justify-center webbutler:rounded-full webbutler:text-[var(--wc-text-4)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[var(--wc-ink)]"
           >
             <HiArrowPath size={11} aria-hidden />
           </button>
@@ -215,12 +254,12 @@ export function TasksView({
             }
             aria-label={`Remove: ${task.prompt}`}
             onClick={() => onRemove(task)}
-            className="webbutler:flex webbutler:size-4 webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:justify-center webbutler:rounded webbutler:text-[var(--wc-text-4)] webbutler:opacity-0 webbutler:transition-all webbutler:duration-100 webbutler:group-hover:opacity-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[var(--wc-ink)] webbutler:focus-visible:opacity-100"
+            className="webbutler:flex webbutler:size-5 webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:justify-center webbutler:rounded-full webbutler:text-[var(--wc-text-4)] webbutler:opacity-0 webbutler:transition-all webbutler:duration-100 webbutler:group-hover:opacity-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[var(--wc-ink)] webbutler:focus-visible:opacity-100"
           >
             <HiOutlineTrash size={11} aria-hidden />
           </button>
         ) : null}
-        <span className="webbutler:shrink-0 webbutler:pt-px webbutler:text-[10px] webbutler:text-[var(--wc-text-4)]">
+        <span className="webbutler:shrink-0 webbutler:pt-[3px] webbutler:text-[10px] webbutler:tabular-nums webbutler:text-[var(--wc-text-4)]">
           {task.status === "running"
             ? "now"
             : timeAgo(task.finishedAt ?? task.startedAt)}
@@ -257,6 +296,18 @@ export function TasksView({
       </ViewHeader>
       <div className="webbutler:min-h-0 webbutler:flex-1 webbutler:overflow-y-auto webbutler:pb-1.5 webbutler:pt-0.5">
         {running.map(row)}
+        {/* A quiet seam between what's moving and what's history. */}
+        {running.length > 0 && settled.length > 0 ? (
+          <div className="webbutler:flex webbutler:items-center webbutler:gap-2 webbutler:px-3 webbutler:pt-1.5 webbutler:pb-1">
+            <span className="webbutler:text-[9px] webbutler:font-medium webbutler:tracking-[0.07em] webbutler:text-[var(--wc-text-4)] webbutler:uppercase">
+              Earlier
+            </span>
+            <span
+              aria-hidden
+              className="webbutler:h-px webbutler:flex-1 webbutler:bg-[var(--wc-border-hairline)]"
+            />
+          </div>
+        ) : null}
         {settled.map(row)}
       </div>
     </div>

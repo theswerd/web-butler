@@ -25,8 +25,13 @@ import {
 
 export function useRun(): {
   run: Run | null;
-  /** Resolves with the run, or the auth rejection the caller must surface. */
-  start: (prompt: string, page: PageContext) => Promise<RunStartResult | null>;
+  /** Resolves with the run, or the auth rejection the caller must surface.
+      With `followUpTaskId`, the message rides into that task's session. */
+  start: (
+    prompt: string,
+    page: PageContext,
+    followUpTaskId?: string,
+  ) => Promise<RunStartResult | null>;
   clear: () => void;
 } {
   const [run, setRun] = useState<Run | null>(null);
@@ -52,12 +57,17 @@ export function useRun(): {
   }, []);
 
   const start = useCallback(
-    async (prompt: string, page: PageContext): Promise<RunStartResult | null> => {
+    async (
+      prompt: string,
+      page: PageContext,
+      followUpTaskId?: string,
+    ): Promise<RunStartResult | null> => {
       try {
         const result: RunStartResult = await browser.runtime.sendMessage({
           type: MESSAGE.RUN_START,
           prompt,
           page,
+          followUpTaskId,
         });
         if (result && !('authRequired' in result)) setRun(result);
         return result;
@@ -85,6 +95,10 @@ export function useTasks(): {
   clearFinished: () => void;
   /** User opened the Tasks view: mark everything seen, in every tab. */
   markSeen: () => void;
+  /** Dismissed one chip from the strip: mark just that task seen. */
+  markTaskSeen: (id: string) => void;
+  /** Stop a running task: cancels its agent turn, settles it stopped. */
+  cancelTask: (id: string) => void;
   /** Trash one row (running rows vanish; the work isn't cancelled). */
   removeTask: (id: string) => void;
   /** Bulk trash: 'old' clears settled history, 'all' empties the list. */
@@ -124,6 +138,29 @@ export function useTasks(): {
       .catch(() => {});
   }, []);
 
+  const markTaskSeen = useCallback((id: string) => {
+    setTasks((current) =>
+      current.map((task) => (task.id === id ? { ...task, seen: true } : task)),
+    );
+    void browser.runtime
+      .sendMessage({ type: MESSAGE.TASKS_SEEN, id })
+      .catch(() => {});
+  }, []);
+
+  const cancelTask = useCallback((id: string) => {
+    // Optimistic like the rest: the settle broadcast confirms.
+    setTasks((current) =>
+      current.map((task) =>
+        task.id === id && task.status === 'running'
+          ? { ...task, status: 'stopped' as const, activity: undefined }
+          : task,
+      ),
+    );
+    void browser.runtime
+      .sendMessage({ type: MESSAGE.TASKS_CANCEL, id })
+      .catch(() => {});
+  }, []);
+
   const clearFinished = useCallback(() => setFinished(null), []);
 
   // Both optimistic, like markSeen: the broadcast confirms.
@@ -153,6 +190,8 @@ export function useTasks(): {
     finished,
     clearFinished,
     markSeen,
+    markTaskSeen,
+    cancelTask,
     removeTask,
     clearTasks,
   };

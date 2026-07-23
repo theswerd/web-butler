@@ -163,6 +163,17 @@ export function MenuPanel({
   const paneRef = useRef<HTMLDivElement | null>(null);
   const [focusRegion, setFocusRegion] = useState<'sidebar' | 'pane' | null>(null);
 
+  // Set when a task row's "View extension" chip sends the user to the
+  // Extensions view — that specific row scrolls into view and flashes.
+  // Cleared as soon as they browse elsewhere so a later plain visit to
+  // Extensions doesn't replay the highlight.
+  const [highlightExtensionId, setHighlightExtensionId] = useState<
+    string | null
+  >(null);
+  useEffect(() => {
+    if (active !== 'extensions') setHighlightExtensionId(null);
+  }, [active]);
+
   // Sidebar/pane divider drag. Width follows the pointer live via local
   // state; the settled value persists to settings on release only (one
   // storage write per drag, not per pixel).
@@ -399,7 +410,10 @@ export function MenuPanel({
             onRetry={onTaskRetry}
             onRemove={onTaskRemove}
             onClear={onTasksClear}
-            onOpenExtensions={() => onSelect('extensions')}
+            onOpenExtensions={(extensionId) => {
+              setHighlightExtensionId(extensionId);
+              onSelect('extensions');
+            }}
           />
         ) : active === 'artifacts' ? (
           <ArtifactsView artifacts={artifacts} onOpen={onOpenArtifact} />
@@ -411,6 +425,7 @@ export function MenuPanel({
             onOpenSettings={onOpenUserScriptsSettings}
             pageUrl={pageUrl}
             onFix={onExtensionFix}
+            highlightId={highlightExtensionId ?? undefined}
           />
         ) : null}
       </div>
