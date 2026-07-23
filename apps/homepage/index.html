@@ -67,6 +67,81 @@
       </svg>
     </a>
   </header>
+  <script>
+    // ⌘-click (Ctrl-click elsewhere) on the wordmark: the designer's
+    // shortcut — a little brand menu with the logo as a ready-to-save SVG.
+    // A plain click still goes home.
+    (() => {
+      const mark = document.querySelector('.wordmark');
+      if (!mark) return;
+      const LOGO_SVG = [
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">',
+        '  <path fill="#171717" d="M3 8.2 H9.6 L11.6 12 L9.6 15.8 H3 L5.2 12 Z" />',
+        '  <path fill="#171717" d="M21 8.2 H14.4 L12.4 12 L14.4 15.8 H21 L18.8 12 Z" />',
+        '  <rect fill="#a3a3a3" x="10.7" y="9.8" width="2.6" height="4.4" rx="0.5" />',
+        '</svg>',
+        '',
+      ].join('\n');
+
+      let menu = null;
+      const closeMenu = () => {
+        if (!menu) return;
+        menu.remove();
+        menu = null;
+        document.removeEventListener('pointerdown', onOutside, true);
+        document.removeEventListener('keydown', onKey, true);
+      };
+      const onOutside = (event) => {
+        // The wordmark itself is excluded: its click handler owns the toggle.
+        if (menu && !menu.contains(event.target) && !mark.contains(event.target)) {
+          closeMenu();
+        }
+      };
+      const onKey = (event) => {
+        if (event.key === 'Escape') closeMenu();
+      };
+
+      const download = () => {
+        const blob = new Blob([LOGO_SVG], { type: 'image/svg+xml' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'web-butler-logo.svg';
+        a.click();
+        URL.revokeObjectURL(url);
+        closeMenu();
+      };
+
+      mark.addEventListener('click', (event) => {
+        if (!(event.metaKey || event.ctrlKey)) return;
+        event.preventDefault();
+        if (menu) {
+          closeMenu();
+          return;
+        }
+        menu = document.createElement('div');
+        menu.className = 'logo-menu';
+        menu.setAttribute('role', 'menu');
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.setAttribute('role', 'menuitem');
+        item.innerHTML =
+          '<svg viewBox="0 0 16 16" fill="none" aria-hidden="true">'
+          + '<path d="M8 2.5v7.5m0 0 3-3m-3 3-3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />'
+          + '<path d="M2.75 11.5v1a1.25 1.25 0 0 0 1.25 1.25h8a1.25 1.25 0 0 0 1.25-1.25v-1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />'
+          + '</svg>Download logo as SVG';
+        item.addEventListener('click', download);
+        menu.appendChild(item);
+        const rect = mark.getBoundingClientRect();
+        menu.style.left = `${rect.left}px`;
+        menu.style.top = `${rect.bottom + 6}px`;
+        document.body.appendChild(menu);
+        item.focus();
+        document.addEventListener('pointerdown', onOutside, true);
+        document.addEventListener('keydown', onKey, true);
+      });
+    })();
+  </script>
 
   <main>
 
