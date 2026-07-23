@@ -732,17 +732,45 @@ main {
   }
 }
 
-/* Install — the honest version, until there is a store listing. */
+/* Install — two ways in: the store that's coming, the repo that works. */
 .install {
   border-top: 1px solid var(--hairline);
   padding: 52px 0 88px;
 }
-.install-lede {
+.install-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 48px;
+}
+.install-col + .install-col {
+  border-left: 1px solid var(--hairline);
+  padding-left: 48px;
+}
+.install-col h3 {
+  margin: 0 0 8px;
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+.install-col > p {
   margin: 0 0 20px;
-  max-width: 58ch;
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--text-2);
+  max-width: 48ch;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-3);
+}
+@media (max-width: 760px) {
+  .install-cols {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+  .install-col + .install-col {
+    border-left: 0;
+    padding-left: 0;
+    border-top: 1px solid var(--hairline);
+    padding-top: 36px;
+  }
 }
 .install-clone {
   display: inline-block;
