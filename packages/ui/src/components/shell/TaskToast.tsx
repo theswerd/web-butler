@@ -53,7 +53,7 @@ export function TaskToast({ task, onOpen, onDismiss }: TaskToastProps) {
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className="webbutler:flex webbutler:w-full webbutler:cursor-pointer webbutler:select-none webbutler:items-center webbutler:gap-2 webbutler:rounded-full webbutler:border webbutler:border-[var(--wc-border)] webbutler:bg-[var(--wc-surface)] webbutler:py-1.5 webbutler:pr-1.5 webbutler:pl-3 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-colors webbutler:duration-100 webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:bg-[var(--wc-hover-1)]"
+      className="webbutler:flex webbutler:w-full webbutler:cursor-pointer webbutler:select-none webbutler:items-center webbutler:gap-2 webbutler:rounded-full webbutler:border webbutler:border-[var(--wc-border)] webbutler:bg-[var(--wc-surface)] webbutler:py-1.5 webbutler:pr-1.5 webbutler:pl-3 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-[border-color,box-shadow] webbutler:duration-100 webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:shadow-[inset_0_0_0_999px_var(--wc-hover-1)]"
     >
       {/* Same verdict icons as the in-tab status pill (AnswerCard), so a
           finish reads the same whether it lands here or there. */}

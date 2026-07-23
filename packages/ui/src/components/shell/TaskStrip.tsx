@@ -110,7 +110,7 @@ export function TaskStrip({
           aria-label={`Show tasks: ${summary}`}
           aria-expanded={false}
           onClick={() => setMinimized(false)}
-          className="webbutler:flex webbutler:cursor-pointer webbutler:select-none webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:border webbutler:border-[var(--wc-border)] webbutler:bg-[var(--wc-surface)] webbutler:py-0.5 webbutler:pr-2 webbutler:pl-2 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-colors webbutler:duration-100 webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:bg-[var(--wc-hover-1)]"
+          className="webbutler:flex webbutler:cursor-pointer webbutler:select-none webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:border webbutler:border-[var(--wc-border)] webbutler:bg-[var(--wc-surface)] webbutler:py-0.5 webbutler:pr-2 webbutler:pl-2 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-[border-color,box-shadow] webbutler:duration-100 webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:shadow-[inset_0_0_0_999px_var(--wc-hover-1)]"
         >
           <span className="webbutler:relative webbutler:flex webbutler:size-1.5 webbutler:shrink-0">
             {running > 0 ? (
@@ -177,7 +177,11 @@ export function TaskStrip({
               className={`webbutler:group webbutler:flex webbutler:w-[264px] webbutler:max-w-full webbutler:cursor-pointer webbutler:select-none webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:border webbutler:py-0.5 webbutler:pr-0.5 webbutler:pl-2 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-[background-color,border-color,box-shadow] webbutler:duration-100 ${
                 selected
                   ? 'webbutler:border-[var(--wc-selection)] webbutler:bg-[var(--wc-surface)] webbutler:shadow-[0_0_0_0.5px_var(--wc-selection)]'
-                  : 'webbutler:border-[var(--wc-border)] webbutler:bg-[var(--wc-surface)] webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:bg-[var(--wc-hover-1)]'
+                  : // Hover tints ON TOP of the surface (inset shadow) instead
+                    // of replacing it — hover-1 alone is a near-transparent
+                    // overlay color, and swapping it in lets the page bleed
+                    // through the pill.
+                    'webbutler:border-[var(--wc-border)] webbutler:bg-[var(--wc-surface)] webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:shadow-[inset_0_0_0_999px_var(--wc-hover-1)]'
               }`}
             >
               <StatusMark task={task} />
