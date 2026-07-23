@@ -291,13 +291,15 @@ main {
 @media (max-width: 900px) {
   .hero-row {
     flex-direction: column;
-    gap: 28px;
-    padding: 32px 0 64px;
+    gap: 18px;
+    padding: 20px 0 56px;
   }
-  .hero { min-width: 0; text-align: center; }
+  /* flex-basis means height once the row becomes a column: reset it,
+     or the hero pads itself out to 380px and shoves the demo down. */
+  .hero { flex: none; min-width: 0; text-align: center; }
   .lede { margin: 0 auto; }
   .cta-row { justify-content: center; }
-  .demo { width: 100%; max-width: 660px; min-width: 0; }
+  .demo { flex: none; width: 100%; max-width: 660px; min-width: 0; }
 }
 
 .window {
@@ -835,7 +837,7 @@ main {
 --------------------------------------------------------------------- */
 
 @media (max-width: 640px) {
-  .hero { padding-top: 48px; }
+  .hero { padding-top: 12px; }
   .stage { padding-bottom: 70px; }
   /* Not enough room to squeeze: the side panel overlays instead. */
   .side-panel { width: 82%; z-index: 6; }
