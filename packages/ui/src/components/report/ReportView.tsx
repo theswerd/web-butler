@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { HiCheck, HiClipboard } from 'react-icons/hi2';
-import { BowtieMark } from '../shell/BowtieMark';
 import { Markdown } from '../Markdown';
 
 /**
@@ -33,18 +32,16 @@ export function ReportView({ title, description, meta, text }: ReportViewProps) 
 
   return (
     <div className="webbutler:flex webbutler:h-full webbutler:flex-col webbutler:bg-[var(--wc-surface-solid)]">
-      {/* Masthead */}
+      {/* Masthead: title with the copy action on its line. */}
       <div className="webbutler:shrink-0 webbutler:border-b webbutler:border-[var(--wc-border-hairline)] webbutler:px-4 webbutler:pt-3.5 webbutler:pb-3">
-        <div className="webbutler:flex webbutler:items-center webbutler:gap-1.5 webbutler:pb-2 webbutler:text-[var(--wc-ink)]">
-          <BowtieMark size={13} />
-          <span className="webbutler:text-[9px] webbutler:font-medium webbutler:tracking-[0.07em] webbutler:text-[var(--wc-text-4)] webbutler:uppercase">
-            Report
-          </span>
-          <span className="webbutler:flex-1" />
+        <div className="webbutler:flex webbutler:items-start webbutler:justify-between webbutler:gap-3">
+          <h1 className="webbutler:min-w-0 webbutler:text-[15px] webbutler:leading-snug webbutler:font-semibold webbutler:text-[var(--wc-ink)]">
+            {title}
+          </h1>
           <button
             type="button"
             onClick={copy}
-            className="webbutler:flex webbutler:cursor-pointer webbutler:items-center webbutler:gap-1 webbutler:rounded-full webbutler:border webbutler:border-[var(--wc-border)] webbutler:px-2 webbutler:py-0.5 webbutler:text-[10px] webbutler:text-[var(--wc-text-2)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-1)]"
+            className="webbutler:mt-px webbutler:flex webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:gap-1 webbutler:rounded-full webbutler:border webbutler:border-[var(--wc-border)] webbutler:px-2 webbutler:py-0.5 webbutler:text-[10px] webbutler:text-[var(--wc-text-2)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-1)]"
           >
             {copied ? (
               <>
@@ -59,9 +56,6 @@ export function ReportView({ title, description, meta, text }: ReportViewProps) 
             )}
           </button>
         </div>
-        <h1 className="webbutler:text-[15px] webbutler:leading-snug webbutler:font-semibold webbutler:text-[var(--wc-ink)]">
-          {title}
-        </h1>
         {description ? (
           <p className="webbutler:pt-0.5 webbutler:text-[11px] webbutler:leading-snug webbutler:text-[var(--wc-text-2)]">
             {description}
