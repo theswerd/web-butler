@@ -184,17 +184,33 @@ main {
 }
 
 /* The subscription, spelled out: the three marks the butler can drive,
-   worn inline in the headline. Sized to the type, seated on the baseline. */
+   stacked like accounts on a keyring — overlapping chips, first in front.
+   Sized in em so they ride the headline's type scale. */
 .hero-logos {
   display: inline-flex;
   align-items: center;
-  gap: 0.3em;
-  margin-left: 0.22em;
+  margin-left: 0.16em;
+  vertical-align: -0.12em; /* optically center the cluster on the x-height */
+}
+.logo-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.92em;
+  height: 0.92em;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid var(--border);
   color: var(--ink);
 }
-.hero-logos svg {
-  width: 0.62em;
-  height: 0.62em;
+.logo-chip + .logo-chip { margin-left: -0.26em; }
+.logo-chatgpt { z-index: 3; }
+.logo-claude { z-index: 2; color: #d97757; } /* Claude's brand terracotta */
+.logo-grok { z-index: 1; }
+.logo-chip svg {
+  width: 0.52em;
+  height: 0.52em;
   display: block;
 }
 
