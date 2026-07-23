@@ -1,0 +1,19 @@
+# Web Butler
+
+> A Chrome extension that drives the browser through a user's existing ChatGPT, Claude, or Grok subscription.
+
+Web Butler adds a compact prompt to every page. It can answer questions using page context, run browser errands, create long-form reports, and install persistent page modifications. The project is open source and uses the user's existing AI subscription rather than a separate model API subscription.
+
+## Primary links
+
+- [Homepage](https://butler.swerdlow.dev/): Product overview, interactive examples, installation paths, and FAQ.
+- [Source and setup guide](https://github.com/theswerd/web-butler#readme): Monorepo source, prerequisites, local server setup, and unpacked-extension instructions.
+- [Full AI reference](https://butler.swerdlow.dev/llms-full.txt): Detailed product, architecture, installation, and usage information.
+
+## Key facts
+
+- Supported providers: ChatGPT through Codex, Claude through Claude Code, and Grok.
+- Supported browser: Chrome and other Chromium browsers that support the required extension APIs.
+- Shortcut: Command-E by default.
+- Local prerequisites: Node 20+, npm, Neon Postgres, a Freestyle API key, and Chrome.
+- License and current source of truth: the GitHub repository.

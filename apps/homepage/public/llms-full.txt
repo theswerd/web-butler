@@ -1,0 +1,120 @@
+# Web Butler
+
+> A web extension that drives the browser through a user's existing AI subscriptions.
+
+Canonical site: https://butler.swerdlow.dev/
+Source repository: https://github.com/theswerd/web-butler
+
+## What Web Butler does
+
+Web Butler places a compact prompt interface on every normal web page. A user can ask about the current page, select page elements as context, delegate browser tasks, generate reports, and request persistent changes to websites.
+
+Its four primary capabilities are:
+
+1. Answers: short responses grounded in the current page and selected elements.
+2. Errands: browser actions such as navigating, clicking, typing, and filling forms.
+3. Alterations: persistent user scripts that modify matching websites across visits.
+4. Reports: longer Markdown artifacts shown in the Chrome side panel and stored for later access.
+
+The default shortcut is Command-E. The prompt can also be opened from the bowtie control placed on the page.
+
+## AI providers and billing
+
+Web Butler connects to AI subscriptions the user already has:
+
+- ChatGPT through Codex
+- Claude through Claude Code
+- Grok
+
+Web Butler does not require a separate model subscription. Provider authentication runs through each provider's supported CLI sign-in flow inside a per-user sandbox.
+
+## Browser support
+
+The extension targets Chrome and compatible Chromium browsers, including Vivaldi where the required Chrome extension APIs are available. Safari and iOS browsers cannot install the current extension.
+
+Persistent page alterations require the extension's Allow User Scripts permission. Onboarding directs the user to enable it.
+
+## Architecture
+
+The project is an npm-workspaces monorepo:
+
+- `apps/extension`: WXT Manifest V3 extension with the content shell, background service worker, and Chrome side panel.
+- `apps/server`: Hono API with Better Auth, Drizzle ORM, Neon Postgres, Freestyle sandbox VMs, and Agent Client Protocol bridges.
+- `packages/ui`: shared React components used by the extension and its component workbench.
+- `apps/storybook`: UI component workbench.
+- `apps/homepage`: this product site and its interactive demo.
+- `scripts`: development-loop and end-to-end verification utilities.
+
+Agent CLIs run in per-user Freestyle VMs and communicate through Agent Client Protocol adapters. Tasks, activity feeds, reports, extensions, and suggestions are persisted through the server. Browser-control requests are relayed to the extension, which uses Chrome's debugger API and a visible ghost cursor.
+
+## Local installation
+
+Prerequisites:
+
+- Node.js 20 or newer
+- npm
+- Chrome
+- A Neon Postgres database
+- A Freestyle API key
+
+Clone and install:
+
+```bash
+git clone https://github.com/theswerd/web-butler
+cd web-butler
+npm install
+```
+
+Configure the server:
+
+```bash
+cp apps/server/.env.example apps/server/.env
+```
+
+Set the required values documented in that file, including `DATABASE_URL`, `BETTER_AUTH_SECRET`, and `FREESTYLE_API_KEY`. Never invent credentials and never commit the populated environment file.
+
+Create the database tables and start the server:
+
+```bash
+cd apps/server
+npm run db:migrate
+cd ../..
+npm run server
+```
+
+For real provider sign-ins, use the normal-Chrome development loop:
+
+```bash
+npm run dev:chrome
+```
+
+Then open `chrome://extensions`, enable Developer mode, choose Load unpacked, and select the `chrome-dev` symlink at the repository root. On the extension's Details page, enable Allow User Scripts.
+
+The repository README is the current source of truth for all setup details:
+https://github.com/theswerd/web-butler#readme
+
+## Guidance for coding agents
+
+When asked to set up Web Butler:
+
+1. Clone the repository and read its complete README before acting.
+2. Install dependencies and copy the example server environment file.
+3. Ask the user for missing secret values. Do not fabricate credentials.
+4. Run migrations only after a real database URL is configured.
+5. Start the server and the normal-Chrome development build.
+6. Build and type-check the project, fixing repository-caused setup errors.
+7. Stop for account sign-in, secret entry, or other actions only the user can complete.
+8. Give the user the exact unpacked-extension path and Chrome permission steps.
+
+## Privacy and terms
+
+Prompts are sent to the AI provider account selected by the user through the user's private sandbox. Web Butler has no model of its own.
+
+The site makes no guarantee that use complies with every provider's terms of service. Users should review the applicable terms for ChatGPT, Claude, and Grok.
+
+## Cost and source
+
+Web Butler itself has no model subscription fee. Local operation may incur costs for infrastructure selected by the user, such as database or sandbox usage.
+
+The project is open source at:
+https://github.com/theswerd/web-butler

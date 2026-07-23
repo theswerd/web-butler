@@ -808,6 +808,40 @@ main {
   background: var(--ink);
   color: var(--paper);
 }
+.install-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.btn-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--sans);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 140ms, background 140ms;
+}
+.btn-copy svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.btn-copy:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+.btn-copy.copied { color: var(--accent); }
+.btn-copy:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
 
 /* ---------------------------------------------------------------------
    FAQ — quiet disclosures under hairline rules, serif questions.
