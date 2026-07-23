@@ -104,15 +104,6 @@ main {
   flex: 1;
 }
 
-.eyebrow {
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--mist);
-  margin: 0 0 18px;
-}
-
 /* ---------------------------------------------------------------------
    Hero
 --------------------------------------------------------------------- */
@@ -121,6 +112,30 @@ main {
   padding: 72px 0 40px;
   text-align: center;
 }
+
+/* Everything above the fold rises into place, in reading order. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hero h1,
+.lede,
+.cta-row,
+.window,
+.demo-tabs {
+  animation: rise 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.lede { animation-delay: 70ms; }
+.cta-row { animation-delay: 140ms; }
+.window { animation-delay: 230ms; }
+.demo-tabs { animation-delay: 320ms; }
 
 .hero h1 {
   font-family: var(--serif);
@@ -386,4 +401,11 @@ main {
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   .post { transition: none; }
+  .hero h1,
+  .lede,
+  .cta-row,
+  .window,
+  .demo-tabs {
+    animation: none;
+  }
 }
