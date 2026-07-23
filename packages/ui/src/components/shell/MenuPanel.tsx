@@ -60,57 +60,76 @@ const SECTIONS: MenuSection[] = [
 
 const FLAT_ITEMS = SECTIONS.flatMap((section) => section.items);
 
+/** One provider's slice of the Providers view: its auth state and the
+    Connect handler for its row. */
+export type MenuProviderProps = {
+  auth?: ProviderAuth;
+  /** Connect clicked on this provider's row — the shell starts its flow. */
+  onConnect?: () => void;
+};
+
+/** Everything the Tasks view needs, in one bag. */
+export type MenuTasksProps = {
+  /** The session's tasks (global, ongoing first). */
+  items?: Task[];
+  /** A task with a report was clicked — the shell opens the side panel. */
+  onOpenReport?: (task: Task) => void;
+  /** A task row was clicked — its transcript opens in the side panel. */
+  onOpenTask?: (task: Task) => void;
+  /** Retry on a failed/stopped row — the shell re-sends the prompt. */
+  onRetry?: (task: Task) => void;
+  /** Trash one row. */
+  onRemove?: (task: Task) => void;
+  /** Bulk trash: 'old' clears settled history, 'all' empties the list. */
+  onClear?: (mode: 'old' | 'all') => void;
+};
+
+/** Everything the Artifacts view needs. */
+export type MenuArtifactsProps = {
+  /** The session's artifacts (global, newest first). */
+  items?: Report[];
+  /** A row was clicked — the shell opens it in the side panel. */
+  onOpen?: (artifact: Report) => void;
+  /** Trash one row. */
+  onRemove?: (artifact: Report) => void;
+  /** Trash every artifact. */
+  onClear?: () => void;
+};
+
+/** Everything the Extensions view needs. */
+export type MenuExtensionsProps = {
+  /** Site extensions + injection availability. */
+  state?: ExtensionsState;
+  /** An extension's switch was flipped. */
+  onToggle?: (id: string, enabled: boolean) => void;
+  /** An extension's delete was clicked. */
+  onDelete?: (id: string) => void;
+  /** "Enable in Chrome settings" on the user-scripts-off banner. */
+  onOpenSettings?: () => void;
+  /** Current page URL — powers the "This page" filter. */
+  pageUrl?: string;
+  /** "Fix" on a broken row — the shell sends a repair prompt. */
+  onFix?: (extension: SiteExtension) => void;
+};
+
+/** The Providers view's slices, one per provider. */
+export type MenuProvidersProps = {
+  codex?: MenuProviderProps;
+  grok?: MenuProviderProps;
+  /** Claude's flow is reversed: the user pastes Anthropic's code back. */
+  claude?: MenuProviderProps & { onSubmitCode?: (code: string) => void };
+};
+
 type MenuPanelProps = {
   active: ViewId;
   onSelect: (id: ViewId) => void;
   settings: Settings;
   onSettingsChange: (patch: Partial<Settings>) => void;
-  /** The session's tasks for the Tasks view (global, ongoing first). */
-  tasks?: Task[];
-  /** A task with a report was clicked — the shell opens the side panel. */
-  onOpenReport?: (task: Task) => void;
-  /** A running task was clicked — its live view opens in the side panel. */
-  onOpenTask?: (task: Task) => void;
-  /** Retry on a failed/stopped task row — the shell re-sends the prompt. */
-  onTaskRetry?: (task: Task) => void;
-  /** Trash one task row. */
-  onTaskRemove?: (task: Task) => void;
-  /** Bulk trash: 'old' clears settled history, 'all' empties the list. */
-  onTasksClear?: (mode: 'old' | 'all') => void;
-  /** The session's artifacts for the Artifacts view (global, newest first). */
-  artifacts?: Report[];
-  /** An artifact row was clicked — the shell opens it in the side panel. */
-  onOpenArtifact?: (artifact: Report) => void;
-  /** Trash one artifact row. */
-  onArtifactRemove?: (artifact: Report) => void;
-  /** Trash every artifact. */
-  onArtifactsClear?: () => void;
-  /** Site extensions + injection availability for the Extensions view. */
-  extensionsState?: ExtensionsState;
-  /** A site extension's switch was flipped. */
-  onExtensionToggle?: (id: string, enabled: boolean) => void;
-  /** A site extension's delete was clicked. */
-  onExtensionDelete?: (id: string) => void;
-  /** "Enable in Chrome settings" on the user-scripts-off banner. */
-  onOpenUserScriptsSettings?: () => void;
-  /** Current page URL — powers the Extensions view's "This page" filter. */
-  pageUrl?: string;
-  /** "Fix" on a broken extension row — the shell sends a repair prompt. */
-  onExtensionFix?: (extension: SiteExtension) => void;
-  /** Codex device-auth state for the Providers view. */
-  codexAuth?: ProviderAuth;
-  /** Connect clicked on the ChatGPT row — the shell starts the device flow. */
-  onCodexConnect?: () => void;
-  /** Grok device-auth state for the Providers view. */
-  grokAuth?: ProviderAuth;
-  /** Connect clicked on the Grok row — the shell starts the device flow. */
-  onGrokConnect?: () => void;
-  /** Claude auth state for the Providers view (reverse code flow). */
-  claudeAuth?: ProviderAuth;
-  /** Connect clicked on the Claude row — the shell starts the flow. */
-  onClaudeConnect?: () => void;
-  /** The user pasted Anthropic's code into the Claude row. */
-  onClaudeSubmitCode?: (code: string) => void;
+  /** Per-view prop bags — each namespace feeds exactly one pane. */
+  tasks?: MenuTasksProps;
+  artifacts?: MenuArtifactsProps;
+  extensions?: MenuExtensionsProps;
+  providers?: MenuProvidersProps;
   /** ArrowLeft on a sidebar row — focus returns to the menu (bowtie) button. */
   onExitLeft?: () => void;
 };
@@ -140,31 +159,16 @@ export function MenuPanel({
   onSelect,
   settings,
   onSettingsChange,
-  tasks = [],
-  onOpenReport,
-  onOpenTask,
-  onTaskRetry,
-  onTaskRemove,
-  onTasksClear,
-  artifacts = [],
-  onOpenArtifact,
-  onArtifactRemove,
-  onArtifactsClear,
-  extensionsState = { extensions: [], userScriptsAvailable: true },
-  onExtensionToggle,
-  onExtensionDelete,
-  onOpenUserScriptsSettings,
-  pageUrl,
-  onExtensionFix,
-  codexAuth,
-  onCodexConnect,
-  grokAuth,
-  onGrokConnect,
-  claudeAuth,
-  onClaudeConnect,
-  onClaudeSubmitCode,
+  tasks = {},
+  artifacts = {},
+  extensions = {},
+  providers = {},
   onExitLeft,
 }: MenuPanelProps) {
+  const extensionsState = extensions.state ?? {
+    extensions: [],
+    userScriptsAvailable: true,
+  };
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const paneRef = useRef<HTMLDivElement | null>(null);
   const [focusRegion, setFocusRegion] = useState<'sidebar' | 'pane' | null>(null);
@@ -399,23 +403,23 @@ export function MenuPanel({
           <ProvidersView
             settings={settings}
             onChange={onSettingsChange}
-            codex={codexAuth}
-            onCodexConnect={onCodexConnect}
-            grok={grokAuth}
-            onGrokConnect={onGrokConnect}
-            claude={claudeAuth}
-            onClaudeConnect={onClaudeConnect}
-            onClaudeSubmitCode={onClaudeSubmitCode}
+            codex={providers.codex?.auth}
+            onCodexConnect={providers.codex?.onConnect}
+            grok={providers.grok?.auth}
+            onGrokConnect={providers.grok?.onConnect}
+            claude={providers.claude?.auth}
+            onClaudeConnect={providers.claude?.onConnect}
+            onClaudeSubmitCode={providers.claude?.onSubmitCode}
             onExitLeft={focusSidebar}
           />
         ) : active === 'tasks' ? (
           <TasksView
-            tasks={tasks}
-            onOpenReport={onOpenReport}
-            onOpenTask={onOpenTask}
-            onRetry={onTaskRetry}
-            onRemove={onTaskRemove}
-            onClear={onTasksClear}
+            tasks={tasks.items ?? []}
+            onOpenReport={tasks.onOpenReport}
+            onOpenTask={tasks.onOpenTask}
+            onRetry={tasks.onRetry}
+            onRemove={tasks.onRemove}
+            onClear={tasks.onClear}
             onOpenExtensions={(extensionId) => {
               setHighlightExtensionId(extensionId);
               onSelect('extensions');
@@ -423,19 +427,19 @@ export function MenuPanel({
           />
         ) : active === 'artifacts' ? (
           <ArtifactsView
-            artifacts={artifacts}
-            onOpen={onOpenArtifact}
-            onRemove={onArtifactRemove}
-            onClear={onArtifactsClear}
+            artifacts={artifacts.items ?? []}
+            onOpen={artifacts.onOpen}
+            onRemove={artifacts.onRemove}
+            onClear={artifacts.onClear}
           />
         ) : active === 'extensions' ? (
           <ExtensionsView
             state={extensionsState}
-            onToggle={(id, enabled) => onExtensionToggle?.(id, enabled)}
-            onDelete={(id) => onExtensionDelete?.(id)}
-            onOpenSettings={onOpenUserScriptsSettings}
-            pageUrl={pageUrl}
-            onFix={onExtensionFix}
+            onToggle={(id, enabled) => extensions.onToggle?.(id, enabled)}
+            onDelete={(id) => extensions.onDelete?.(id)}
+            onOpenSettings={extensions.onOpenSettings}
+            pageUrl={extensions.pageUrl}
+            onFix={extensions.onFix}
             highlightId={highlightExtensionId ?? undefined}
           />
         ) : null}

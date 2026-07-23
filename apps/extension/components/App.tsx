@@ -915,39 +915,44 @@ export function App() {
                         onSelect={selectView}
                         settings={settings}
                         onSettingsChange={updateSettings}
-                        tasks={tasks}
-                        onOpenReport={(task) => openSidePanel(task.reportId)}
-                        onOpenTask={openTaskPanel}
-                        // Retry re-sends the prompt as a fresh run from
-                        // this tab; the menu closes so the working prompt
-                        // (and the answer, when it lands) is in view.
-                        onTaskRetry={(task) => {
-                          patchShell({ menuOpen: false });
-                          handleSend(task.prompt);
+                        tasks={{
+                          items: tasks,
+                          onOpenReport: (task) =>
+                            openSidePanel(task.reportId),
+                          onOpenTask: openTaskPanel,
+                          // Retry re-sends the prompt as a fresh run from
+                          // this tab; the menu closes so the working prompt
+                          // (and the answer, when it lands) is in view.
+                          onRetry: (task) => {
+                            patchShell({ menuOpen: false });
+                            handleSend(task.prompt);
+                          },
+                          onRemove: (task) => removeTask(task.id),
+                          onClear: clearTasks,
                         }}
-                        onTaskRemove={(task) => removeTask(task.id)}
-                        onTasksClear={clearTasks}
-                        artifacts={artifacts}
-                        onOpenArtifact={(artifact) =>
-                          openSidePanel(artifact.id)
-                        }
-                        onArtifactRemove={(artifact) =>
-                          removeArtifact(artifact.id)
-                        }
-                        onArtifactsClear={clearArtifacts}
-                        extensionsState={extensionsState}
-                        onExtensionToggle={toggleExtension}
-                        onExtensionDelete={removeExtension}
-                        onOpenUserScriptsSettings={openUserScriptsSettings}
-                        pageUrl={window.location.href}
-                        onExtensionFix={sendExtensionRepair}
-                        codexAuth={codexAuth}
-                        onCodexConnect={connectCodex}
-                        grokAuth={grokAuth}
-                        onGrokConnect={connectGrok}
-                        claudeAuth={claudeAuth}
-                        onClaudeConnect={connectClaude}
-                        onClaudeSubmitCode={submitClaudeCode}
+                        artifacts={{
+                          items: artifacts,
+                          onOpen: (artifact) => openSidePanel(artifact.id),
+                          onRemove: (artifact) => removeArtifact(artifact.id),
+                          onClear: clearArtifacts,
+                        }}
+                        extensions={{
+                          state: extensionsState,
+                          onToggle: toggleExtension,
+                          onDelete: removeExtension,
+                          onOpenSettings: openUserScriptsSettings,
+                          pageUrl: window.location.href,
+                          onFix: sendExtensionRepair,
+                        }}
+                        providers={{
+                          codex: { auth: codexAuth, onConnect: connectCodex },
+                          grok: { auth: grokAuth, onConnect: connectGrok },
+                          claude: {
+                            auth: claudeAuth,
+                            onConnect: connectClaude,
+                            onSubmitCode: submitClaudeCode,
+                          },
+                        }}
                         onExitLeft={() => plusRef.current?.focus()}
                       />
                     </div>

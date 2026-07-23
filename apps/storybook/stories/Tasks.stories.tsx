@@ -166,23 +166,25 @@ function MenuWithTasks() {
         onSettingsChange={(patch) =>
           setSettings((current) => ({ ...current, ...patch }))
         }
-        tasks={tasks}
-        onOpenReport={(task) => console.log('open report', task.reportId)}
-        onOpenTask={(task) => console.log('open task', task.id)}
-        onTaskRetry={(task) => console.log('retry', task.prompt)}
-        onTaskRemove={(task) =>
-          setTasks((current) => current.filter((row) => row.id !== task.id))
-        }
-        onTasksClear={(mode) =>
-          setTasks((current) =>
-            mode === 'old'
-              ? current.filter((row) => row.status === 'running')
-              : [],
-          )
-        }
-        extensionsState={{
-          extensions: SAMPLE_EXTENSIONS,
-          userScriptsAvailable: true,
+        tasks={{
+          items: tasks,
+          onOpenReport: (task) => console.log('open report', task.reportId),
+          onOpenTask: (task) => console.log('open task', task.id),
+          onRetry: (task) => console.log('retry', task.prompt),
+          onRemove: (task) =>
+            setTasks((current) => current.filter((row) => row.id !== task.id)),
+          onClear: (mode) =>
+            setTasks((current) =>
+              mode === 'old'
+                ? current.filter((row) => row.status === 'running')
+                : [],
+            ),
+        }}
+        extensions={{
+          state: {
+            extensions: SAMPLE_EXTENSIONS,
+            userScriptsAvailable: true,
+          },
         }}
       />
     </div>
