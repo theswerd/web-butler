@@ -1,11 +1,8 @@
 import {
   AnswerCard,
-  ChatGptLogo,
-  ClaudeLogo,
   CollapsedPill,
   ContextChips,
   GhostCursor,
-  GrokLogo,
   INITIAL_GHOST_CURSOR,
   PlusButton,
   PromptPanel,
@@ -21,7 +18,6 @@ import {
   useEffect,
   useRef,
   useState,
-  type ComponentType,
   type CSSProperties,
   type DetailedHTMLProps,
   type HTMLAttributes,
@@ -65,41 +61,11 @@ const ASK_CHIP: PickedElement = {
   html: '',
 };
 
-/**
- * The engine behind each errand — the selling point made visible. There is
- * no Web Butler model: every scene runs on a subscription the visitor
- * already recognizes, and the shell wears it like a name tag.
- */
-type DemoProvider = {
-  id: 'chatgpt' | 'claude' | 'grok';
-  /** How the tag reads: "your ChatGPT plan". */
-  plan: string;
-  Logo: ComponentType<{ size?: number }>;
-};
-
-const CHATGPT: DemoProvider = {
-  id: 'chatgpt',
-  plan: 'your ChatGPT plan',
-  Logo: ChatGptLogo,
-};
-const CLAUDE: DemoProvider = {
-  id: 'claude',
-  plan: 'your Claude plan',
-  Logo: ClaudeLogo,
-};
-const GROK: DemoProvider = {
-  id: 'grok',
-  plan: 'your Grok plan',
-  Logo: GrokLogo,
-};
-
 type Scenario = {
   id: 'ask' | 'edit' | 'form' | 'report';
   tab: string;
   addr: string;
   prompt: string;
-  /** Whose subscription is driving this errand. */
-  provider: DemoProvider;
 };
 
 const SCENARIOS: Scenario[] = [
@@ -108,28 +74,24 @@ const SCENARIOS: Scenario[] = [
     tab: 'Answers',
     addr: 'help.example',
     prompt: 'Can I cancel without losing my files?',
-    provider: CHATGPT,
   },
   {
     id: 'edit',
     tab: 'Alterations',
     addr: 'your-feed.example',
     prompt: 'Always hide the sponsored posts here',
-    provider: CLAUDE,
   },
   {
     id: 'form',
     tab: 'Errands',
     addr: 'checkout.example',
     prompt: 'Fill this checkout form from my saved details',
-    provider: GROK,
   },
   {
     id: 'report',
     tab: 'Reports',
     addr: 'plans.example',
     prompt: 'Compare these plans into a report',
-    provider: CHATGPT,
   },
 ];
 
@@ -560,42 +522,27 @@ export function Demo() {
                       ) : null}
                     </AnimatePresence>
 
-                    {/* Who's driving: every errand runs on a plan the
-                        visitor already pays for, and the shell says so.
-                        The answering scene's picked-element chip shares
-                        the row (hover it and the box on the page glows). */}
-                    <div
-                      style={{
-                        width: '100%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 8,
-                      }}
-                    >
-                      <ProviderTag
-                        provider={scene.provider}
-                        working={working}
-                      />
-                      {scene.id === 'ask' ? (
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <ContextChips
-                            elements={[ASK_CHIP]}
-                            missingIds={NO_MISSING}
-                            onRemove={noop}
-                            onHover={(element) => setChipGlow(element != null)}
-                            onJump={() =>
-                              document
-                                .querySelector('.article .picked')
-                                ?.scrollIntoView({
-                                  behavior: 'smooth',
-                                  block: 'center',
-                                })
-                            }
-                          />
-                        </div>
-                      ) : null}
-                    </div>
+                    {/* The answering scene points at the page: a picked
+                        element, worn as a chip. Hover it and the box on the
+                        page glows; click it and the page shows you where. */}
+                    {scene.id === 'ask' ? (
+                      <div style={{ width: '100%' }}>
+                        <ContextChips
+                          elements={[ASK_CHIP]}
+                          missingIds={NO_MISSING}
+                          onRemove={noop}
+                          onHover={(element) => setChipGlow(element != null)}
+                          onJump={() =>
+                            document
+                              .querySelector('.article .picked')
+                              ?.scrollIntoView({
+                                behavior: 'smooth',
+                                block: 'center',
+                              })
+                          }
+                        />
+                      </div>
+                    ) : null}
 
                     {/* Live for the pointer so the plus button's bowtie does
                         its straighten-the-tie shake and the send arrow keeps
@@ -681,37 +628,6 @@ export function Demo() {
           )
         : null}
     </div>
-  );
-}
-
-/**
- * The name tag on the butler's lapel: which subscription is doing the
- * work right now. Crossfades when the scene hands the job to another
- * provider; a pulsing dot marks the plan as live while it works.
- */
-function ProviderTag({
-  provider,
-  working,
-}: {
-  provider: DemoProvider;
-  working: boolean;
-}) {
-  const Logo = provider.Logo;
-  return (
-    <AnimatePresence mode="wait" initial={false}>
-      <motion.span
-        key={provider.id}
-        className="provider-tag"
-        initial={{ opacity: 0, y: 5 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -5 }}
-        transition={SPRING_UI}
-      >
-        <Logo size={11} />
-        {provider.plan}
-        {working ? <span className="provider-dot" /> : null}
-      </motion.span>
-    </AnimatePresence>
   );
 }
 

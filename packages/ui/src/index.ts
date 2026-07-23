@@ -34,7 +34,6 @@ export * from './components/shell/RepairToast';
 export * from './components/shell/GhostCursor';
 export * from './components/shell/OnboardingCard';
 export * from './components/shell/PlusButton';
-export * from './components/shell/provider-logos';
 export * from './components/shell/views/ArtifactsView';
 export * from './components/shell/views/ExtensionsView';
 export * from './components/shell/views/TasksView';
