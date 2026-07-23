@@ -547,6 +547,39 @@ main {
 .demo-tabs button:hover { color: var(--text-2); }
 .demo-tabs button.on { color: var(--ink); }
 
+/* Who's driving: the shell wears the plan that's doing the work — the
+   product's whole argument, visible in every scene. Styled to sit beside
+   the shell's own chips: hairline pill, mono type, frosted surface. */
+.provider-tag {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 3px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(24px);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.provider-tag svg { display: block; color: var(--ink); }
+
+/* Live while the plan is mid-errand. */
+.provider-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: provider-pulse 1.1s ease-in-out infinite;
+}
+@keyframes provider-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
 /* The demo prompt is real but scripted: the field ignores the pointer and
    never shows a caret (the shell auto-focuses it on panel clicks), while
    the plus/send buttons around it keep their hover and tap life. */
