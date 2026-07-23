@@ -80,7 +80,7 @@ a { color: inherit; }
 --------------------------------------------------------------------- */
 
 .top {
-  max-width: 1200px;
+  max-width: 1260px;
   /* Body is a flex column; auto margins would otherwise shrink-wrap this. */
   width: 100%;
   margin: 0 auto;
@@ -120,7 +120,7 @@ a { color: inherit; }
 .top-link svg { display: block; }
 
 main {
-  max-width: 1200px;
+  max-width: 1260px;
   width: 100%;
   margin: 0 auto;
   padding: 0 24px;
@@ -138,7 +138,7 @@ main {
 .hero-row {
   display: flex;
   align-items: center;
-  gap: 56px;
+  gap: 48px;
   padding: 40px 0 72px;
 }
 
@@ -173,14 +173,29 @@ main {
 .hero h1 {
   font-family: var(--serif);
   font-weight: 500;
-  font-size: clamp(34px, 3.8vw, 48px);
-  line-height: 1.1;
+  font-size: clamp(32px, 3.3vw, 42px);
+  line-height: 1.16;
   letter-spacing: -0.015em;
   margin: 0 0 16px;
 }
 .hero h1 em {
   font-style: italic;
   font-weight: 500;
+}
+
+/* The subscription, spelled out: the three marks the butler can drive,
+   worn inline in the headline. Sized to the type, seated on the baseline. */
+.hero-logos {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  margin-left: 0.22em;
+  color: var(--ink);
+}
+.hero-logos svg {
+  width: 0.62em;
+  height: 0.62em;
+  display: block;
 }
 
 .lede {
