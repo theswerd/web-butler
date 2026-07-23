@@ -185,6 +185,25 @@ export function buildCode(ext: SiteExtension): string {
     onNavigate(fn) {
       __runtime.navCallbacks.push({ id: __id, fn });
     },
+    // Cross-origin fetch, run in the background with the extension's host
+    // permissions (so page CSP / CORS don't apply and the site's own cookies
+    // ride along). This is what lets an extension call an API and render the
+    // result. Returns a minimal fetch-like Response; text()/json() are async.
+    async fetch(url, options) {
+      const res = await chrome.runtime.sendMessage({
+        webButlerFetch: { url: String(url), options: options || {} },
+      });
+      if (!res || !res.ok) {
+        throw new Error((res && res.error) || 'web butler fetch failed');
+      }
+      const r = res.response;
+      return {
+        ok: r.ok, status: r.status, statusText: r.statusText,
+        url: r.url, headers: r.headers,
+        text() { return Promise.resolve(r.body); },
+        json() { return Promise.resolve(JSON.parse(r.body)); },
+      };
+    },
   };
 
   const webButler = {

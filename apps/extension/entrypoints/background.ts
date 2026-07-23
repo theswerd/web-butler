@@ -480,6 +480,76 @@ async function setExtensions(extensions: SiteExtension[]) {
   });
 }
 
+/** Cap on the response body we hand back to a user script (structured-clone
+    over the messaging channel). Plenty for an API payload; a guard against a
+    script pulling a whole media file into the page. */
+const EXTENSION_FETCH_BODY_CAP = 500_000;
+
+/**
+ * Perform a cross-origin fetch for an installed extension's `page.fetch`.
+ * Runs in the background, so it carries the extension's host permissions
+ * (`<all_urls>`) — page CSP and CORS don't apply — and includes the target
+ * site's cookies by default, so an extension can call the very API the page
+ * uses. Returns a plain, cloneable shape; the prelude rebuilds a Response.
+ */
+async function handleExtensionFetch(
+  req: Record<string, unknown>,
+): Promise<
+  | {
+      ok: true;
+      response: {
+        ok: boolean;
+        status: number;
+        statusText: string;
+        url: string;
+        headers: Record<string, string>;
+        body: string;
+      };
+    }
+  | { ok: false; error: string }
+> {
+  const url = typeof req.url === 'string' ? req.url : '';
+  if (!/^https?:\/\//i.test(url)) {
+    return { ok: false, error: 'page.fetch: only http(s) URLs are allowed' };
+  }
+  const opts = (req.options ?? {}) as Record<string, unknown>;
+  const init: RequestInit = {
+    method: typeof opts.method === 'string' ? opts.method : 'GET',
+    headers:
+      opts.headers && typeof opts.headers === 'object'
+        ? (opts.headers as Record<string, string>)
+        : undefined,
+    body: typeof opts.body === 'string' ? opts.body : undefined,
+    // The point is calling the site's own API as the user, so default to
+    // sending cookies; a script can opt out with credentials: 'omit'.
+    credentials: opts.credentials === 'omit' ? 'omit' : 'include',
+  };
+  try {
+    const resp = await fetch(url, init);
+    const raw = await resp.text();
+    const headers: Record<string, string> = {};
+    resp.headers.forEach((value, key) => {
+      headers[key] = value;
+    });
+    return {
+      ok: true,
+      response: {
+        ok: resp.ok,
+        status: resp.status,
+        statusText: resp.statusText,
+        url: resp.url,
+        headers,
+        body: raw.slice(0, EXTENSION_FETCH_BODY_CAP),
+      },
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'page.fetch failed',
+    };
+  }
+}
+
 /**
  * A script's self-diagnosis arrived from the user-script world. Record it,
  * refresh every tab's view, and on the first "broken" for a version, ask
@@ -1423,14 +1493,26 @@ export default defineBackground(() => {
               fn: (
                 message: unknown,
                 sender: { tab?: { id?: number } },
-              ) => void,
+                sendResponse: (response: unknown) => void,
+              ) => boolean | void,
             ): void;
           };
         };
       };
     }
   ).chrome?.runtime?.onUserScriptMessage;
-  onUserScriptMessage?.addListener((message, sender) => {
+  onUserScriptMessage?.addListener((message, sender, sendResponse) => {
+    // Cross-origin fetch on behalf of an installed extension (page.fetch in
+    // the prelude). Run it here so it uses the extension's host permissions
+    // and the site's cookies, not the page's CSP. Async → return true.
+    const fetchReq = (message as { webButlerFetch?: unknown })?.webButlerFetch;
+    if (fetchReq && typeof fetchReq === 'object') {
+      void handleExtensionFetch(fetchReq as Record<string, unknown>).then(
+        sendResponse,
+      );
+      return true;
+    }
+
     const report = (message as { webButlerHealth?: unknown })?.webButlerHealth;
     if (!report || typeof report !== 'object') return;
     const { id, version, status, reason, url } = report as Record<string, unknown>;

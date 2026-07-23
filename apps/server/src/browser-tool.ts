@@ -53,6 +53,11 @@ export const browserActionSchema = z.discriminatedUnion('kind', [
   }),
   z.object({ id: z.string(), kind: z.literal('key'), key: z.string() }),
   z.object({ id: z.string(), kind: z.literal('scroll'), dy: z.number() }),
+  z.object({
+    id: z.string(),
+    kind: z.literal('network'),
+    filter: z.string().optional(),
+  }),
 ]);
 
 export type BrowserAction = z.infer<typeof browserActionSchema>;
@@ -193,6 +198,7 @@ function usage() {
     '  tabs                       list open tabs\\n' +
     '  snapshot                   list interactive elements (with refs) on the active tab\\n' +
     '  read                       read the visible text of the active tab\\n' +
+    '  network [filter]           recent XHR/fetch calls on the active tab (method, status, url, bodies); [filter] = url substring, or "all" for every request\\n' +
     '  navigate <url>             go to a URL\\n' +
     '  back                       go back one page\\n' +
     '  click <ref>                click the element with that ref\\n' +
@@ -214,6 +220,7 @@ try {
   if (cmd === 'tabs') action = { id, kind: 'tabs' };
   else if (cmd === 'snapshot') action = { id, kind: 'snapshot' };
   else if (cmd === 'read') action = { id, kind: 'read' };
+  else if (cmd === 'network') action = { id, kind: 'network', filter: argv[1] };
   else if (cmd === 'navigate') action = { id, kind: 'navigate', url: argv[1] };
   else if (cmd === 'back') action = { id, kind: 'back' };
   else if (cmd === 'click') action = { id, kind: 'click', ref: argv[1] };
@@ -275,11 +282,22 @@ Work against a fresh snapshot, act, then re-snapshot:
 
 To explore or map a site: navigate (or click a link), \`browser read\` to take in the page's text, note what's there, then click through to the next page. Use \`browser back\` to return and try another branch. Move deliberately — a few representative pages beats clicking everything — and keep a running sense of the structure so your final outcome can describe it. The user is watching the cursor travel, so this doubles as a demonstration.
 
+## Investigating how a page works, then building on it
+
+The debugger sees the page's network traffic, which is often the shortest path to understanding — and then extending — a site. When a request is "build me a button that does X" or "show me Y inline", investigate first, then author a page extension (see the page-extension skill) that talks to the same API:
+
+1. Load or interact with the page so it makes its real requests (\`browser navigate\`, or \`browser click\` the thing that triggers the call).
+2. \`browser network\` — read the XHR/fetch calls: the endpoint URLs, methods, what the request bodies carry, and what the responses look like. Filter to the interesting one (\`browser network graphql\`).
+3. Now you know the contract. Author an extension whose script calls that endpoint with \`page.fetch(url, options)\` (it runs in the background with the extension's host permissions, so cross-origin and the site's own cookies both work) and renders the result — a button that fires the call, a panel of live data, an inline field the page was missing.
+
+So the pattern is: drive the browser to LEARN (network + read), then produce an \`extension\` outcome to BUILD. The investigation is throwaway; the extension is the deliverable.
+
 ## Commands
 
 - \`browser tabs\` — list the user's open tabs (id, title, url). The cursor acts on the active one.
 - \`browser snapshot\` — current URL/title + the ref map of the active tab. Start here and re-run after every change.
 - \`browser read\` — the visible text of the active tab, for taking in a page's content while exploring or verifying a change.
+- \`browser network [filter]\` — the tab's recent network traffic, captured live by the debugger: each XHR/fetch call's method, status, URL, and request/response body preview. This is how you discover the API a page actually speaks. Pass a URL substring to filter (\`browser network api/search\`); pass \`all\` to include non-XHR requests too.
 - \`browser navigate <url>\` — load a URL in the active tab.
 - \`browser back\` — go back one page in history.
 - \`browser click <ref>\` — move the cursor to that element and click it (this is how you follow links too).

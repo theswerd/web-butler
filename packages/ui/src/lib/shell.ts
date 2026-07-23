@@ -176,6 +176,11 @@ export type BrowserAction = { id: string } & (
   | { kind: 'type'; ref: string; text: string; submit?: boolean }
   | { kind: 'key'; key: string }
   | { kind: 'scroll'; dy: number }
+  /** Dump the tab's recent network traffic (XHR/fetch by default) captured
+      by the debugger — the agent's way to learn the API a page speaks
+      before building an extension against it. Optional URL substring
+      filter; "all" widens past XHR/fetch to every request. */
+  | { kind: 'network'; filter?: string }
 );
 
 /** The outcome of one BrowserAction, sent back to unblock the CLI. */

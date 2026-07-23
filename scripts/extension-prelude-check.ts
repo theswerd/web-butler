@@ -144,5 +144,52 @@ if (byId.get('health-throw')?.reason !== 'anchor missing') {
 }
 console.log('health reports:', [...byId.values()]);
 
+// --- 5. page.fetch bridge ---------------------------------------------------
+// page.fetch messages the background and rebuilds a fetch-like Response.
+// Shim sendMessage to answer the webButlerFetch envelope and verify the
+// script sees a working Response (status + async json()).
+await page.evaluate(`
+  globalThis.chrome = {
+    runtime: {
+      sendMessage(message) {
+        if (message && message.webButlerFetch) {
+          return Promise.resolve({
+            ok: true,
+            response: {
+              ok: true, status: 200, statusText: 'OK',
+              url: message.webButlerFetch.url,
+              headers: { 'content-type': 'application/json' },
+              body: '{"total":42}',
+            },
+          });
+        }
+        return Promise.resolve();
+      },
+    },
+  };
+  globalThis.__fetchResult = null;
+`);
+await page.evaluate(
+  variant(
+    'fetch-1',
+    `webButler.register({
+       apply(page) {
+         page.fetch('https://api.example.com/stats').then(async (res) => {
+           globalThis.__fetchResult = { status: res.status, data: await res.json() };
+         });
+       },
+       remove() {},
+     });`,
+  ),
+);
+await page.waitForTimeout(300);
+const fetchResult = (await page.evaluate('globalThis.__fetchResult')) as {
+  status: number;
+  data: { total: number };
+} | null;
+if (fetchResult?.status !== 200) fail(`page.fetch status ${fetchResult?.status}`);
+if (fetchResult?.data?.total !== 42) fail(`page.fetch json ${JSON.stringify(fetchResult?.data)}`);
+console.log('page.fetch:', fetchResult);
+
 await browser.close();
 console.log(process.exitCode ? 'PRELUDE CHECK FAILED' : 'PRELUDE CHECK PASSED');
