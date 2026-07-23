@@ -254,7 +254,7 @@ export function App() {
   }, [finished, run, clearRun]);
 
   // First-run onboarding: hand-holds connecting an AI before the prompt
-  // takes over. Terminal once finished or skipped.
+  // takes over. There's no skipping: it stays until a provider connects.
   const [onboarding, completeOnboarding] = useOnboarding();
   // Chrome's user-scripts toggle, polled live while onboarding shows: the
   // permissions step blocks on it and auto-advances when it flips.
@@ -1007,7 +1007,7 @@ export function App() {
 
               {onboarding === 'pending' ? (
                 // First run: the onboarding card takes the prompt's place
-                // until an AI is connected (or the user opts out).
+                // until an AI is connected — the only way through.
                 <OnboardingCard
                   codex={codexAuth}
                   grok={grokAuth}
@@ -1018,7 +1018,6 @@ export function App() {
                   onConnected={(provider) => updateSettings({ provider })}
                   userScriptsEnabled={userScriptsEnabled}
                   onOpenUserScriptsSettings={openUserScriptsSettings}
-                  onSkip={completeOnboarding}
                   onDone={() => {
                     // Land the user in a focused prompt, ready to type.
                     setFocusOnOpen(true);

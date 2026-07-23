@@ -4,9 +4,9 @@ import { storage } from 'wxt/utils/storage';
 import { MESSAGE, type ExtensionsState } from '@web-butler/ui/shell';
 
 /**
- * First-run onboarding flag. `pending` until the user either connects an
- * AI through the onboarding card or explicitly skips — both are terminal
- * (no nagging); Providers in the menu stays available either way.
+ * First-run onboarding flag. `pending` until the user connects an AI
+ * through the onboarding card — there's no skipping — then terminally
+ * `done`. Providers in the menu stays available for changes afterward.
  */
 const onboardingDoneItem = storage.defineItem<boolean>(
   'local:onboardingDone',

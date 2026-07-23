@@ -21,7 +21,6 @@ function Frame({ children }: { children: React.ReactNode }) {
  */
 function LiveDemo() {
   const [codex, setCodex] = useState<ProviderAuth>({ status: 'disconnected' });
-  const [skipped, setSkipped] = useState(false);
   const [finished, setFinished] = useState(false);
 
   const connect = () => {
@@ -39,11 +38,10 @@ function LiveDemo() {
     window.setTimeout(() => setCodex({ status: 'connected' }), 9000);
   };
 
-  if (skipped || finished) {
+  if (finished) {
     return (
       <p style={{ fontFamily: 'sans-serif', fontSize: 13 }}>
-        {finished ? 'Onboarding finished.' : 'Onboarding skipped.'} (Reload
-        the story to run it again.)
+        Onboarding finished. (Reload the story to run it again.)
       </p>
     );
   }
@@ -53,7 +51,6 @@ function LiveDemo() {
       <OnboardingCard
         codex={codex}
         onConnect={connect}
-        onSkip={() => setSkipped(true)}
         onDone={() => setFinished(true)}
       />
     </Frame>
@@ -97,7 +94,6 @@ function PermissionsDemo() {
         onOpenUserScriptsSettings={() =>
           window.setTimeout(() => setUserScripts(true), 1500)
         }
-        onSkip={() => {}}
         onDone={() => setFinished(true)}
       />
     </Frame>
@@ -114,7 +110,6 @@ export const Welcome: Story = {
       <OnboardingCard
         codex={{ status: 'disconnected' }}
         onConnect={() => {}}
-        onSkip={() => {}}
         onDone={() => {}}
       />
     </Frame>
@@ -127,12 +122,7 @@ function AtConnectStep({ codex }: { codex: ProviderAuth }) {
   // in the target state and the reviewer clicks through.
   return (
     <Frame>
-      <OnboardingCard
-        codex={codex}
-        onConnect={() => {}}
-        onSkip={() => {}}
-        onDone={() => {}}
-      />
+      <OnboardingCard codex={codex} onConnect={() => {}} onDone={() => {}} />
     </Frame>
   );
 }
@@ -167,7 +157,6 @@ export const OnSignInPage: Story = {
           expiresAt: Date.now() + 15 * 60_000,
         }}
         onConnect={() => {}}
-        onSkip={() => {}}
         onDone={() => {}}
       />
     </Frame>
@@ -194,7 +183,6 @@ export const ClaudeCodePaste: Story = {
             onSubmitCode={() =>
               window.setTimeout(() => setClaude({ status: 'connected' }), 1500)
             }
-            onSkip={() => {}}
             onDone={() => {}}
           />
         </Frame>

@@ -11,12 +11,14 @@ import { BowtieMark } from './BowtieMark';
 import { ChatGptLogo, ClaudeLogo, GrokLogo } from './provider-logos';
 
 /**
- * First-run onboarding: replaces the prompt bar until an AI is connected
- * (or the user opts out). One continuous morph instead of discrete pages:
- * the chosen "Sign in with …" pill IS the primary control the whole way —
- * it stretches into "Getting your code…", then "Open sign-in page", then
- * "Start using Web Butler", while the provider mark slides out of the pill
- * into the heading. Motion layoutIds carry both through every phase.
+ * First-run onboarding: replaces the prompt bar until an AI is connected —
+ * there is no skipping; connecting one is the way in. One continuous morph
+ * instead of discrete pages: the chosen "Sign in with …" pill IS the primary
+ * control the whole way — it stretches into "Getting your code…", then
+ * "Open sign-in page", then "Start using Web Butler", while the provider
+ * mark slides out of the pill into the heading. Motion layoutIds carry both
+ * through every phase. A Back control on the connect step returns to the
+ * provider choice for second thoughts.
  */
 
 type Phase = 'welcome' | 'connect' | 'permissions' | 'done';
@@ -74,8 +76,11 @@ type OnboardingCardProps = {
   onSubmitCode?: (code: string) => void;
   /** A provider finished connecting — the shell makes it the active one. */
   onConnected?: (provider: OnboardingProvider) => void;
-  /** "I'll do this later" — dismisses onboarding; Providers stays available. */
-  onSkip: () => void;
+  /**
+   * Gate only: "Not now" dismisses the card back to the prompt. Full
+   * onboarding has no skip — connecting a provider is the only way through.
+   */
+  onSkip?: () => void;
   /** Finished (connected + acknowledged) — swap back to the prompt. */
   onDone: () => void;
   /**
@@ -175,6 +180,12 @@ export function OnboardingCard({
   // Claude's reverse flow: what the user pasted, and whether it's in flight.
   const [codeInput, setCodeInput] = useState('');
   const [codeSubmitted, setCodeSubmitted] = useState(false);
+  // The user has steered the card themselves (picked a provider or pressed
+  // Back). From then on the auto re-aim below stays out of the way: it
+  // exists to catch a login already in flight when the card first shows,
+  // and after an explicit choice it would only fight the user — e.g.
+  // bouncing them back into a pending flow they just backed out of.
+  const [userNavigated, setUserNavigated] = useState(false);
 
   // layoutIds must be unique per instance (Storybook renders several) and
   // per provider, so the clicked pill is the one that morphs onward.
@@ -234,9 +245,9 @@ export function OnboardingCard({
   // A login already in flight (started from another tab — e.g. this IS the
   // sign-in page) takes over: the welcome pitch skips straight to connect,
   // and a gate that defaulted to ChatGPT re-aims at the live provider. Only
-  // when the current provider is idle — never hijack an explicit choice.
+  // until the user steers the card themselves — after that, never hijack.
   useEffect(() => {
-    if (phase === 'done' || phase === 'permissions') return;
+    if (phase === 'done' || phase === 'permissions' || userNavigated) return;
     const busy = (status: ProviderAuth['status']) =>
       status === 'starting' || status === 'pending';
     // In connect, only re-aim while the chosen provider sits idle — never
@@ -253,11 +264,21 @@ export function OnboardingCard({
   });
 
   const signIn = (p: OnboardingProvider) => {
+    setUserNavigated(true);
     setProvider(p);
     setPhase('connect');
     setCodeInput('');
     setCodeSubmitted(false);
     onConnect(p);
+  };
+
+  // Second thoughts: back to the provider choice. The abandoned flow keeps
+  // running on the VM — re-picking the same provider just restarts it.
+  const goBack = () => {
+    setUserNavigated(true);
+    setPhase('welcome');
+    setCodeInput('');
+    setCodeSubmitted(false);
   };
 
   const submitCode = () => {
@@ -274,7 +295,17 @@ export function OnboardingCard({
     window.setTimeout(() => setCopied(false), 1500);
   };
 
-  const skipLabel = gate ? 'Not now' : 'I’ll do this later';
+  // The connect step's ghost control: the gate can be waved away ("Not
+  // now"), but onboarding only goes backward — to the provider choice.
+  const ghostAction = gate ? (
+    <button type="button" onClick={onSkip} className={GHOST_BUTTON}>
+      Not now
+    </button>
+  ) : (
+    <button type="button" onClick={goBack} className={GHOST_BUTTON}>
+      Back
+    </button>
+  );
 
   return (
     <motion.div
@@ -351,9 +382,6 @@ export function OnboardingCard({
                 </motion.button>
               );
             })}
-            <button type="button" onClick={onSkip} className={GHOST_BUTTON}>
-              Skip for now
-            </button>
           </div>
         </div>
       ) : phase === 'connect' ? (
@@ -395,9 +423,7 @@ export function OnboardingCard({
                 >
                   <motion.span layout="position">Try again</motion.span>
                 </motion.button>
-                <button type="button" onClick={onSkip} className={GHOST_BUTTON}>
-                  {skipLabel}
-                </button>
+                {ghostAction}
               </div>
             </>
           ) : (
@@ -560,9 +586,7 @@ export function OnboardingCard({
                       </motion.span>
                     </motion.div>
                   )}
-                  <button type="button" onClick={onSkip} className={GHOST_BUTTON}>
-                    {skipLabel}
-                  </button>
+                  {ghostAction}
                 </div>
                 {auth.status === 'pending' && codeTimeLeft ? (
                   <motion.span
