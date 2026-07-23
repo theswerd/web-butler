@@ -26,9 +26,9 @@ import { createPortal } from 'react-dom';
 
 /**
  * The homepage demo: the REAL shell components from @web-butler/ui, played
- * as theater through three scripted errands — answering a question about
- * the page, altering the page for good, and filing a report. One window,
- * one butler, three example pages cycling underneath it.
+ * as theater through four scripted errands — answering a question, altering
+ * a page for good, filing a report, and filling a form. One window, one
+ * butler, four example pages cycling underneath it.
  *
  * The shell is genuine but non-interactive (the whole stage is inert);
  * the only controls are the scenario tabs under the window. The window
@@ -59,7 +59,7 @@ const ASK_CHIP: PickedElement = {
 };
 
 type Scenario = {
-  id: 'ask' | 'edit' | 'report';
+  id: 'ask' | 'edit' | 'form' | 'report';
   tab: string;
   addr: string;
   prompt: string;
@@ -77,6 +77,12 @@ const SCENARIOS: Scenario[] = [
     tab: 'Alterations',
     addr: 'your-feed.example',
     prompt: 'Always hide the sponsored posts here',
+  },
+  {
+    id: 'form',
+    tab: 'Errands',
+    addr: 'checkout.example',
+    prompt: 'Fill this checkout form from my saved details',
   },
   {
     id: 'report',
@@ -111,11 +117,12 @@ const REPORT_MD = `Three tiers on plans.example, read side by side.
 
 /**
  * idle (pill) → per-scene: typing → working → done → next scene …
- * The report scene keeps going: done → point (the butler's cursor rides
+ * The form scene becomes acting while the cursor fills each field. The
+ * report scene keeps going: done → point (the butler's cursor rides
  * to the Open button and clicks) → panel (the side panel serves the
  * report) → next scene.
  */
-type Phase = 'typing' | 'working' | 'done' | 'point' | 'panel';
+type Phase = 'typing' | 'working' | 'acting' | 'done' | 'point' | 'panel';
 
 export function Demo() {
   const [open, setOpen] = useState(false);
@@ -123,6 +130,7 @@ export function Demo() {
   const [phase, setPhase] = useState<Phase>('typing');
   const [typed, setTyped] = useState('');
   const [cursor, setCursor] = useState<GhostCursorState>(INITIAL_GHOST_CURSOR);
+  const [formStep, setFormStep] = useState(0);
 
   const mountRef = useRef<HTMLDivElement | null>(null);
   const timersRef = useRef<number[]>([]);
@@ -143,10 +151,13 @@ export function Demo() {
     setSceneIndex(index);
     setTyped('');
     setCursor(INITIAL_GHOST_CURSOR);
+    setFormStep(0);
     if (staticRef.current) {
       // Frozen theaters rest on the delivered state; for the report that
       // includes the served side panel.
-      setPhase(SCENARIOS[index].id === 'report' ? 'panel' : 'done');
+      const id = SCENARIOS[index].id;
+      if (id === 'form') setFormStep(4);
+      setPhase(id === 'report' ? 'panel' : 'done');
       return;
     }
     setPhase('typing');
@@ -166,6 +177,8 @@ export function Demo() {
             setPhase('done');
             if (SCENARIOS[index].id === 'report') {
               later(1000, () => pointAndServe(advance));
+            } else if (SCENARIOS[index].id === 'form') {
+              later(700, () => fillForm(advance));
             } else {
               later(5200, advance);
             }
@@ -218,8 +231,65 @@ export function Demo() {
     later(7600, advance);
   };
 
+  /**
+   * A visible browser errand: move the real GhostCursor through the checkout,
+   * click each field, fill it from saved details, then press Review order.
+   */
+  const fillForm = (advance: () => void) => {
+    const win = mountRef.current?.closest<HTMLElement>('.window');
+    const stage = win?.querySelector<HTMLElement>('.stage');
+    if (!win || !stage) {
+      later(4200, advance);
+      return;
+    }
+
+    setPhase('acting');
+    const from = stage.getBoundingClientRect();
+    setCursor({
+      x: from.left + from.width * 0.72,
+      y: from.top + 44,
+      visible: true,
+      pressCount: 0,
+    });
+
+    const visit = (
+      selector: string,
+      label: string,
+      at: number,
+      completedStep: number,
+    ) => {
+      later(at, () => {
+        const target = win.querySelector<HTMLElement>(selector);
+        if (!target) return;
+        const rect = target.getBoundingClientRect();
+        setCursor((current) => ({
+          ...current,
+          x: rect.left + Math.min(rect.width * 0.3, 76),
+          y: rect.top + rect.height / 2,
+          label,
+        }));
+      });
+      later(at + 620, () => {
+        setCursor((current) => ({
+          ...current,
+          pressCount: current.pressCount + 1,
+          label: undefined,
+        }));
+        setFormStep(completedStep);
+      });
+    };
+
+    visit('[data-demo-field="name"]', 'Full name', 180, 1);
+    visit('[data-demo-field="email"]', 'Email', 1250, 2);
+    visit('[data-demo-field="address"]', 'Delivery address', 2320, 3);
+    visit('[data-demo-field="review"]', 'Review order', 3500, 4);
+    later(4300, () => setPhase('done'));
+    later(4750, () => setCursor((current) => ({ ...current, visible: false })));
+    later(9000, advance);
+  };
+
   useEffect(() => {
-    // ?scene=ask|edit|report freezes that scene's delivered state — for
+    // ?scene=ask|edit|form|report freezes that scene's delivered state — for
     // screenshots and visual review. Not linked anywhere.
     const forced = new URLSearchParams(window.location.search).get('scene');
     const forcedIndex = SCENARIOS.findIndex((s) => s.id === forced);
@@ -227,7 +297,9 @@ export function Demo() {
       staticRef.current = true;
       setOpen(true);
       setSceneIndex(forcedIndex);
-      setPhase(SCENARIOS[forcedIndex].id === 'report' ? 'panel' : 'done');
+      const id = SCENARIOS[forcedIndex].id;
+      if (id === 'form') setFormStep(4);
+      setPhase(id === 'report' ? 'panel' : 'done');
       return;
     }
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -283,7 +355,7 @@ export function Demo() {
     startScene(index);
   };
 
-  const working = phase === 'working';
+  const working = phase === 'working' || phase === 'acting';
   const tabsHost = document.getElementById('demo-tabs');
 
   return (
@@ -302,6 +374,8 @@ export function Demo() {
             <ArticleStage />
           ) : scene.id === 'edit' ? (
             <FeedStage />
+          ) : scene.id === 'form' ? (
+            <FormStage step={formStep} />
           ) : (
             <PlansStage />
           )}
@@ -401,6 +475,12 @@ export function Demo() {
                               extensionEnabled
                               onExtensionToggle={noop}
                             />
+                          ) : scene.id === 'form' ? (
+                            <AnswerCard
+                              tier="status"
+                              text="Checkout filled. Ready for your review."
+                              onDismiss={noop}
+                            />
                           ) : (
                             <AnswerCard
                               tier="artifact"
@@ -460,12 +540,17 @@ export function Demo() {
               </AnimatePresence>
             </div>
 
-            {/* The butler's own hand: the same GhostCursor the extension
-                animates while it drives a page for real. */}
-            <GhostCursor state={cursor} accentColor={ACCENT} />
           </div>
         </web-butler>
       </div>
+
+      {/* Portal the hand above the animated window. The window's rise-in
+          transform creates a containing block for fixed descendants; body
+          keeps the cursor's viewport coordinates honest, like the extension. */}
+      {createPortal(
+        <GhostCursor state={cursor} accentColor={ACCENT} />,
+        document.body,
+      )}
 
       {/* Scenario tabs live outside the window frame. */}
       {tabsHost
@@ -559,6 +644,69 @@ function PlansStage() {
           <span className="buy" />
         </div>
       ))}
+    </div>
+  );
+}
+
+/** A checkout the cursor can visibly complete, field by field. */
+function FormStage({ step }: { step: number }) {
+  return (
+    <div className="demo-form">
+      <div className="form-heading">
+        <span className="headline" />
+        <span className="form-total">$48.00</span>
+      </div>
+      <div className="form-fields">
+        <DemoField
+          label="Full name"
+          value={step >= 1 ? 'Avery Morgan' : ''}
+          active={step === 1}
+          field="name"
+        />
+        <DemoField
+          label="Email"
+          value={step >= 2 ? 'avery@example.com' : ''}
+          active={step === 2}
+          field="email"
+        />
+        <DemoField
+          label="Delivery address"
+          value={step >= 3 ? '1428 Market Street' : ''}
+          active={step === 3}
+          field="address"
+        />
+      </div>
+      <button
+        type="button"
+        data-demo-field="review"
+        className={step >= 4 ? 'review filled' : 'review'}
+      >
+        {step >= 4 ? 'Ready to review' : 'Review order'}
+      </button>
+    </div>
+  );
+}
+
+function DemoField({
+  label,
+  value,
+  active,
+  field,
+}: {
+  label: string;
+  value: string;
+  active: boolean;
+  field: string;
+}) {
+  return (
+    <div
+      data-demo-field={field}
+      className={active ? 'demo-field active' : 'demo-field'}
+    >
+      <span className="field-label">{label}</span>
+      <span className={value ? 'field-value filled' : 'field-value'}>
+        {value || ' '}
+      </span>
     </div>
   );
 }
