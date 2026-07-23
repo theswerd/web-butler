@@ -53,9 +53,27 @@ a { color: inherit; }
    bowtie is the real BowtieMark component; it animates itself.
 --------------------------------------------------------------------- */
 
-.bowtie { width: 18px; height: 18px; display: block; }
+.bowtie { width: 20px; height: 20px; display: block; }
 .bt-wing { fill: currentColor; }
-.bt-knot { fill: var(--mist); }
+.bt-knot { fill: var(--mist); transition: fill 150ms ease-out; }
+
+/* The butler straightens his tie when greeted — same pause/tilt/
+   over-correct/settle beats as the extension's adjust variant, and the
+   knot warms to the accent while the pointer stays. */
+.wordmark .bowtie {
+  transform-origin: 50% 50%;
+}
+.wordmark:hover .bowtie {
+  animation: bow-adjust 500ms ease-in-out;
+}
+.wordmark:hover .bt-knot { fill: var(--accent); }
+@keyframes bow-adjust {
+  0% { transform: rotate(0deg); }
+  25% { transform: rotate(-8deg); }
+  55% { transform: rotate(5deg); }
+  80% { transform: rotate(-2deg); }
+  100% { transform: rotate(0deg); }
+}
 
 /* ---------------------------------------------------------------------
    Frame
@@ -75,12 +93,18 @@ a { color: inherit; }
 .wordmark {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
+  padding: 4px 8px;
+  margin-left: -8px; /* optically align the mark with the column edge */
+  border-radius: 8px;
   text-decoration: none;
+  color: var(--ink);
   font-weight: 600;
   font-size: 14px;
   letter-spacing: 0.01em;
+  transition: background-color 120ms;
 }
+.wordmark:hover { background: var(--hover); }
 
 .top-link {
   display: flex;
@@ -626,7 +650,8 @@ main {
   .lede,
   .cta-row,
   .window,
-  .demo-tabs {
+  .demo-tabs,
+  .wordmark:hover .bowtie {
     animation: none;
   }
 }
