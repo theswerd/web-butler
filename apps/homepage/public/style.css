@@ -270,6 +270,68 @@ main {
   border-bottom-width: 0;
 }
 
+/* Help-center article (the answering scene). One paragraph carries the
+   pick ring — the same accent language as the shell's element picker. */
+.article { display: flex; flex-direction: column; gap: 9px; }
+.article .headline {
+  height: 14px;
+  width: 58%;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.09);
+  margin-bottom: 6px;
+}
+.article .picked {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 6px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.06);
+}
+.article .picked-label {
+  position: absolute;
+  top: -9px;
+  right: 10px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+/* Pricing page (the report scene): three plans, side by side. */
+.plans {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.plan {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+}
+.plan.featured { border-color: rgba(0, 0, 0, 0.22); }
+.plan .price {
+  height: 16px;
+  width: 52%;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.1);
+  margin: 2px 0 4px;
+}
+.plan .buy {
+  height: 24px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.08);
+  margin-top: 6px;
+}
+
 /* The butler, docked like the real thing. What renders inside is the
    real thing: the shell components from @web-butler/ui. */
 #demo-mount { display: contents; }
@@ -279,11 +341,34 @@ main {
   left: 18px;
   right: 18px;
   bottom: 14px;
-  /* The live pick layer and selection highlights inside are position:fixed;
-     lift them above everything else on the page. */
   z-index: 5;
 }
 .butler #web-butler-root { width: 100%; }
+
+/* Scenario tabs, set in the eyebrow voice. */
+.demo-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 26px;
+  margin-top: 20px;
+}
+.demo-tabs button {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  padding: 3px 1px;
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--mist);
+  transition: color 120ms, border-color 120ms;
+}
+.demo-tabs button:hover { color: var(--text-2); }
+.demo-tabs button.on { color: var(--ink); border-color: var(--ink); }
 
 /* ---------------------------------------------------------------------
    Small screens

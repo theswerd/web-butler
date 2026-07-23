@@ -2,11 +2,8 @@ import {
   AnswerCard,
   CollapsedPill,
   ContextChips,
-  ElementHighlight,
-  ElementPickerOverlay,
   PlusButton,
   PromptPanel,
-  resolvePickedElement,
   shellVariants,
   SPRING_UI,
   type PickedElement,
@@ -20,25 +17,20 @@ import {
   type DetailedHTMLProps,
   type HTMLAttributes,
 } from 'react';
+import { createPortal } from 'react-dom';
 
 /**
- * The homepage demo: the REAL shell components from @web-butler/ui —
- * CollapsedPill, PromptPanel, PlusButton, AnswerCard — scripted through
- * one errand on a loop, over a skeleton feed. What ships is what's shown.
+ * The homepage demo: the REAL shell components from @web-butler/ui, played
+ * as theater through three scripted errands — answering a question about
+ * the page, altering the page for good, and filing a report. One window,
+ * one butler, three example pages cycling underneath it.
  *
- * And the controls are live. The first real interaction (the pill, the
- * crosshair) stops the theater and hands the shell to the visitor: the
- * element picker genuinely works against this page, picked elements become
- * context chips with tracking highlights, and sending gets an honest answer
- * about where the demo ends.
- *
- * The window frame and feed styling live in the page stylesheet
- * (public/style.css); the shell draws itself.
+ * The shell is genuine but non-interactive (the whole stage is inert);
+ * the only controls are the scenario tabs under the window. The window
+ * frame and the faux-page skeletons are styled by public/style.css.
  */
 
-// The extension mounts the shell in a shadow root under a <web-butler> host;
-// the picker overlay uses that tag to tell "our UI" from "the page". The demo
-// mounts in the light DOM under the same tag so the same filter applies.
+// Mirrors the extension's mount tag; kept for parity with the real thing.
 declare module 'react' {
   namespace JSX {
     interface IntrinsicElements {
@@ -47,185 +39,201 @@ declare module 'react' {
   }
 }
 
-const ERRAND = 'Always hide the sponsored posts here';
 const ACCENT = '#3b82f6';
 const NO_MISSING: ReadonlySet<string> = new Set();
-
-/** idle → open → typing → working → done → (hold) → idle … */
-type Phase = 'idle' | 'open' | 'typing' | 'working' | 'done';
-
 const noop = () => {};
 
-/** What sending in the demo honestly gets you. */
-function demoAnswer(prompt: string, pickedCount: number): string {
-  const quoted = prompt.length > 60 ? `${prompt.slice(0, 60)}…` : prompt;
-  const context =
-    pickedCount > 0
-      ? pickedCount === 1
-        ? ', along with the element you picked,'
-        : `, along with the ${pickedCount} elements you picked,`
-      : '';
-  return `The demo stops here: this page has no agent behind it. In the extension, "${quoted}"${context} would go straight to your own AI, and the result would land in this card.`;
-}
+/** The element "picked" in the answering scene, worn as a context chip. */
+const ASK_CHIP: PickedElement = {
+  id: 'ask-chip',
+  selector: 'main section.policy > p:nth-of-type(2)',
+  label: 'p.policy',
+  tag: 'p',
+  text: 'Cancellation and refunds',
+  html: '',
+};
+
+type Scenario = {
+  id: 'ask' | 'edit' | 'report';
+  tab: string;
+  addr: string;
+  prompt: string;
+};
+
+const SCENARIOS: Scenario[] = [
+  {
+    id: 'ask',
+    tab: 'Answers',
+    addr: 'help.example',
+    prompt: 'Can I cancel without losing my files?',
+  },
+  {
+    id: 'edit',
+    tab: 'Alterations',
+    addr: 'your-feed.example',
+    prompt: 'Always hide the sponsored posts here',
+  },
+  {
+    id: 'report',
+    tab: 'Reports',
+    addr: 'plans.example',
+    prompt: 'Compare these plans into a report',
+  },
+];
+
+const ASK_ANSWER =
+  'Yes. The policy you pointed at keeps exports available for 30 days ' +
+  'after you cancel. Download your archive first: Settings, then Data, ' +
+  'then Export.';
+
+/** idle (pill) → per-scene: typing → working → done → next scene … */
+type Phase = 'typing' | 'working' | 'done';
 
 export function Demo() {
-  const [phase, setPhase] = useState<Phase>('idle');
+  const [open, setOpen] = useState(false);
+  const [sceneIndex, setSceneIndex] = useState(0);
+  const [phase, setPhase] = useState<Phase>('typing');
   const [typed, setTyped] = useState('');
-  const [enabled, setEnabled] = useState(true);
-
-  // Live mode: the visitor touched a real control, the theater stops, and
-  // the components behave exactly like they do in the extension.
-  const [live, setLive] = useState(false);
-  const [draft, setDraft] = useState('');
-  const [picking, setPicking] = useState(false);
-  const [picked, setPicked] = useState<PickedElement[]>([]);
-  const [hoveredChip, setHoveredChip] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
-  const [answer, setAnswer] = useState<string | null>(null);
 
   const mountRef = useRef<HTMLDivElement | null>(null);
-  // Lets the takeover handler kill the theater loop from outside its effect.
-  const stopLoopRef = useRef<() => void>(noop);
+  const timersRef = useRef<number[]>([]);
+  // Frozen theaters (?scene= param, reduced motion) rest on the done state
+  // and only move when a tab is pressed.
+  const staticRef = useRef(false);
 
-  // The feed folds through the same CSS the static page used: a data-state
-  // attribute on the .window element around this mount.
-  useEffect(() => {
-    const win = mountRef.current?.closest<HTMLElement>('.window');
-    if (win) win.dataset.state = phase;
-  }, [phase]);
+  const later = (ms: number, fn: () => void) => {
+    timersRef.current.push(window.setTimeout(fn, ms));
+  };
+  const clearTimers = () => {
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [];
+  };
+
+  const startScene = (index: number) => {
+    clearTimers();
+    setSceneIndex(index);
+    setTyped('');
+    if (staticRef.current) {
+      setPhase('done');
+      return;
+    }
+    setPhase('typing');
+    const prompt = SCENARIOS[index].prompt;
+    let i = 0;
+    const typeNext = () => {
+      i += 1;
+      setTyped(prompt.slice(0, i));
+      if (i < prompt.length) {
+        later(34 + Math.random() * 40, typeNext);
+      } else {
+        later(550, () => {
+          setTyped('');
+          setPhase('working');
+          later(3200, () => {
+            setPhase('done');
+            later(5200, () => startScene((index + 1) % SCENARIOS.length));
+          });
+        });
+      }
+    };
+    later(600, typeNext);
+  };
 
   useEffect(() => {
-    // ?phase=working freezes the theater on one phase — for screenshots
-    // and visual review. Not linked anywhere.
-    const forced = new URLSearchParams(window.location.search).get('phase');
-    if (forced) {
-      setPhase(forced as Phase);
-      if (forced === 'typing') setTyped(ERRAND.slice(0, 21));
+    // ?scene=ask|edit|report freezes that scene's delivered state — for
+    // screenshots and visual review. Not linked anywhere.
+    const forced = new URLSearchParams(window.location.search).get('scene');
+    const forcedIndex = SCENARIOS.findIndex((s) => s.id === forced);
+    if (forcedIndex >= 0) {
+      staticRef.current = true;
+      setOpen(true);
+      setSceneIndex(forcedIndex);
+      setPhase('done');
       return;
     }
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      // No theater: rest on the delivered state.
+      // No theater: rest on the first delivered state; tabs still switch.
+      staticRef.current = true;
+      setOpen(true);
       setPhase('done');
       return;
     }
 
-    let timers: number[] = [];
-    let disposed = false;
-    const later = (ms: number, fn: () => void) => {
-      timers.push(window.setTimeout(fn, ms));
-    };
-
-    const run = () => {
-      if (disposed) return;
-      timers.forEach(clearTimeout);
-      timers = [];
-      setTyped('');
-      setEnabled(true);
-      setPhase('idle');
-
-      later(900, () => setPhase('open'));
-      later(1700, () => {
-        setPhase('typing');
-        let i = 0;
-        const type = () => {
-          i += 1;
-          setTyped(ERRAND.slice(0, i));
-          if (i < ERRAND.length) {
-            timers.push(window.setTimeout(type, 34 + Math.random() * 40));
-          } else {
-            later(500, () => {
-              setTyped('');
-              setPhase('working');
-              later(4100, () => {
-                setPhase('done');
-                later(5600, run); // hold the delivered state, then again
-              });
-            });
-          }
-        };
-        type();
-      });
-    };
-
-    // Start when the demo scrolls into view; one loop from then on.
+    // Start when the demo scrolls into view; loop from then on.
     const stage = mountRef.current?.closest('.window');
     if (!stage) return;
     const io = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) {
           io.disconnect();
-          run();
+          later(900, () => setOpen(true));
+          later(1700, () => startScene(0));
         }
       },
       { threshold: 0.35 },
     );
     io.observe(stage);
-    const stop = () => {
-      disposed = true;
+    return () => {
       io.disconnect();
-      timers.forEach(clearTimeout);
-      timers = [];
+      clearTimers();
     };
-    stopLoopRef.current = stop;
-    return stop;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** First real interaction: the theater yields, the visitor drives. */
-  const takeControl = () => {
-    if (live) return;
-    stopLoopRef.current();
-    setLive(true);
-    setTyped('');
-    setPhase('open');
+  const scene = SCENARIOS[sceneIndex];
+
+  // The window frame reacts through plain DOM: data-state drives the
+  // sponsored-post fold CSS, the address bar reads the scene's site.
+  useEffect(() => {
+    const win = mountRef.current?.closest<HTMLElement>('.window');
+    if (!win) return;
+    win.dataset.state = !open
+      ? 'idle'
+      : phase === 'done' && scene.id === 'edit'
+        ? 'done'
+        : 'open';
+    const addr = win.querySelector('.addr');
+    if (addr) addr.textContent = scene.addr;
+  }, [open, phase, scene]);
+
+  const selectScene = (index: number) => {
+    setOpen(true);
+    startScene(index);
   };
 
-  const togglePicker = () => {
-    takeControl();
-    setPicking((was) => !was);
-  };
-
-  const handlePick = (element: PickedElement, keepPicking: boolean) => {
-    setPicked((prev) =>
-      prev.some((p) => p.selector === element.selector)
-        ? prev
-        : [...prev, element],
-    );
-    if (!keepPicking) setPicking(false);
-  };
-
-  const handleSubmit = (text: string) => {
-    setAnswer(null);
-    setSending(true);
-    const count = picked.length;
-    window.setTimeout(() => {
-      setSending(false);
-      setAnswer(demoAnswer(text, count));
-    }, 1600);
-  };
-
-  const working = live ? sending : phase === 'working';
-  const showPrompt = live || phase !== 'idle';
+  const working = phase === 'working';
+  const tabsHost = document.getElementById('demo-tabs');
 
   return (
     <div ref={mountRef} style={{ display: 'contents' }}>
-      <div className="feed" aria-hidden="true">
-        <Post lines={['w-72', 'w-48']} />
-        <Post lines={['w-64', 'w-56']} sponsored />
-        <Post lines={['w-80', 'w-40']} />
-        <Post lines={['w-56', 'w-64']} sponsored />
-      </div>
+      {/* The faux page under the butler, one skeleton per scene. */}
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={scene.id}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.16, ease: 'easeOut' }}
+          aria-hidden="true"
+        >
+          {scene.id === 'ask' ? (
+            <ArticleStage />
+          ) : scene.id === 'edit' ? (
+            <FeedStage />
+          ) : (
+            <PlansStage />
+          )}
+        </motion.div>
+      </AnimatePresence>
 
-      {/* The butler, docked like the real thing. Token root + accent, same
-          as the content script's mount. */}
-      <div className="butler">
+      {/* The butler, docked like the real thing — and inert: real
+          components, scripted hands. */}
+      <div className="butler" aria-hidden="true" inert>
         <web-butler style={{ display: 'block' }}>
           <div
             id="web-butler-root"
             style={{ '--wc-selection': ACCENT, height: 'auto' } as CSSProperties}
           >
-            {/* Pill <-> open dock, swapped exactly like the extension's App:
-                mode="wait" so the pill fades/shrinks out before the dock
-                springs in, both anchored to the bottom-center dock edge. */}
             <div
               style={{
                 display: 'flex',
@@ -234,7 +242,7 @@ export function Demo() {
               }}
             >
               <AnimatePresence mode="wait" initial={false}>
-                {showPrompt ? (
+                {open ? (
                   <motion.div
                     key="open"
                     variants={shellVariants}
@@ -250,69 +258,63 @@ export function Demo() {
                       gap: 8,
                     }}
                   >
-                    {/* Answers rise into the dock with the extension's
+                    {/* Results rise into the dock with the extension's
                         answer-slot spring. */}
                     <AnimatePresence initial={false}>
-                      {!live && phase === 'done' ? (
+                      {phase === 'done' ? (
                         <motion.div
-                          key="theater-answer"
+                          key={`${scene.id}-result`}
                           initial={{ opacity: 0, y: 8, scale: 0.98 }}
                           animate={{ opacity: 1, y: 0, scale: 1 }}
                           exit={{ opacity: 0, scale: 0.98 }}
                           transition={SPRING_UI}
                           style={{ width: '100%' }}
                         >
-                          <AnswerCard
-                            tier="extension"
-                            text="Installed"
-                            title="Hide sponsored posts"
-                            description="Hides sponsored posts in this feed, on every visit."
-                            urlPatterns={['https://your-feed.example/*']}
-                            scriptingAllowed
-                            extensionEnabled={enabled}
-                            onExtensionToggle={setEnabled}
-                          />
-                        </motion.div>
-                      ) : null}
-                      {live && answer !== null ? (
-                        <motion.div
-                          key="live-answer"
-                          initial={{ opacity: 0, y: 8, scale: 0.98 }}
-                          animate={{ opacity: 1, y: 0, scale: 1 }}
-                          exit={{ opacity: 0, scale: 0.98 }}
-                          transition={SPRING_UI}
-                          style={{ width: '100%' }}
-                        >
-                          <AnswerCard
-                            tier="answer"
-                            text={answer}
-                            onDismiss={() => setAnswer(null)}
-                          />
+                          {scene.id === 'ask' ? (
+                            <AnswerCard
+                              tier="answer"
+                              text={ASK_ANSWER}
+                              onDismiss={noop}
+                            />
+                          ) : scene.id === 'edit' ? (
+                            <AnswerCard
+                              tier="extension"
+                              text="Installed"
+                              title="Hide sponsored posts"
+                              description="Hides sponsored posts in this feed, on every visit."
+                              urlPatterns={['https://your-feed.example/*']}
+                              scriptingAllowed
+                              extensionEnabled
+                              onExtensionToggle={noop}
+                            />
+                          ) : (
+                            <AnswerCard
+                              tier="artifact"
+                              text="Plan comparison"
+                              title="Plan comparison"
+                              description="Prices, limits, and the fine print, side by side."
+                              onOpenReport={noop}
+                              onDismiss={noop}
+                            />
+                          )}
                         </motion.div>
                       ) : null}
                     </AnimatePresence>
-                    {live && picked.length > 0 ? (
+
+                    {/* The answering scene points at the page: a picked
+                        element, worn as a chip. */}
+                    {scene.id === 'ask' ? (
                       <div style={{ width: '100%' }}>
                         <ContextChips
-                          elements={picked}
+                          elements={[ASK_CHIP]}
                           missingIds={NO_MISSING}
-                          onRemove={(id) =>
-                            setPicked((prev) =>
-                              prev.filter((p) => p.id !== id),
-                            )
-                          }
-                          onHover={(element) =>
-                            setHoveredChip(element?.id ?? null)
-                          }
-                          onJump={(element) => {
-                            resolvePickedElement(element)?.scrollIntoView({
-                              behavior: 'smooth',
-                              block: 'center',
-                            });
-                          }}
+                          onRemove={noop}
+                          onHover={noop}
+                          onJump={noop}
                         />
                       </div>
                     ) : null}
+
                     <div style={{ width: '100%' }}>
                       <PromptPanel
                         leading={
@@ -323,12 +325,9 @@ export function Demo() {
                             working={working}
                           />
                         }
-                        value={live ? draft : typed}
-                        onValueChange={live ? setDraft : noop}
-                        onSubmit={live ? handleSubmit : undefined}
+                        value={typed}
+                        onValueChange={noop}
                         loading={working}
-                        pickerActive={picking}
-                        onTogglePicker={togglePicker}
                       />
                     </div>
                   </motion.div>
@@ -341,31 +340,54 @@ export function Demo() {
                     exit="hidden"
                     style={{ transformOrigin: 'bottom center' }}
                   >
-                    <CollapsedPill onOpen={takeControl} />
+                    <CollapsedPill onOpen={noop} />
                   </motion.div>
                 )}
               </AnimatePresence>
             </div>
-
-            {/* The real pick layer, over this very page. Esc cancels,
-                shift-click collects several — same as in the extension. */}
-            {picking ? (
-              <ElementPickerOverlay
-                onPick={handlePick}
-                onCancel={() => setPicking(false)}
-              />
-            ) : null}
-            {picked.map((element) => (
-              <ElementHighlight
-                key={element.id}
-                element={element}
-                accentColor={ACCENT}
-                emphasis={hoveredChip === element.id}
-              />
-            ))}
           </div>
         </web-butler>
       </div>
+
+      {/* Scenario tabs live outside the window frame. */}
+      {tabsHost
+        ? createPortal(
+            <div
+              className="demo-tabs"
+              role="tablist"
+              aria-label="Demo scenarios"
+            >
+              {SCENARIOS.map((s, index) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={index === sceneIndex}
+                  className={index === sceneIndex ? 'on' : ''}
+                  onClick={() => selectScene(index)}
+                >
+                  {s.tab}
+                </button>
+              ))}
+            </div>,
+            tabsHost,
+          )
+        : null}
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------
+   The example pages — abstract skeletons, one per errand.
+---------------------------------------------------------------------- */
+
+function FeedStage() {
+  return (
+    <div className="feed">
+      <Post lines={['w-72', 'w-48']} />
+      <Post lines={['w-64', 'w-56']} sponsored />
+      <Post lines={['w-80', 'w-40']} />
+      <Post lines={['w-56', 'w-64']} sponsored />
     </div>
   );
 }
@@ -381,5 +403,44 @@ function Post({ lines, sponsored }: { lines: string[]; sponsored?: boolean }) {
       </span>
       {sponsored ? <span className="tag">Sponsored</span> : null}
     </article>
+  );
+}
+
+/** A help-center article; one paragraph carries the pick ring. */
+function ArticleStage() {
+  return (
+    <div className="article">
+      <span className="headline" />
+      <span className="line w-40" />
+      <span className="line w-80" />
+      <span className="line w-72" />
+      <span className="line w-64" />
+      <div className="picked">
+        <span className="picked-label">p.policy</span>
+        <span className="line w-80" />
+        <span className="line w-72" />
+        <span className="line w-48" />
+      </div>
+      <span className="line w-72" />
+      <span className="line w-56" />
+    </div>
+  );
+}
+
+/** A pricing page: three plans, ripe for a side-by-side report. */
+function PlansStage() {
+  return (
+    <div className="plans">
+      {(['w-48', 'w-56', 'w-40'] as const).map((width, index) => (
+        <div key={width} className={index === 1 ? 'plan featured' : 'plan'}>
+          <span className={`line ${width}`} />
+          <span className="price" />
+          <span className="line w-80" />
+          <span className="line w-72" />
+          <span className="line w-64" />
+          <span className="buy" />
+        </div>
+      ))}
+    </div>
   );
 }

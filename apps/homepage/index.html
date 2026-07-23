@@ -51,20 +51,23 @@
       </div>
     </section>
 
-    <!-- The signature: the product itself, running one errand on a loop. -->
-    <section class="demo" aria-label="Demo: Web Butler installing a page extension that hides sponsored posts">
+    <!-- The signature: the product itself, running three errands on a loop —
+         answering about the page, altering it for good, filing a report. -->
+    <section class="demo" aria-label="Demo: Web Butler answering questions, editing pages, and generating reports on example sites">
       <div class="window" data-state="idle" id="demo">
         <div class="chrome" aria-hidden="true">
           <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-          <span class="addr">your-feed.example</span>
+          <span class="addr">help.example</span>
         </div>
         <div class="stage">
-          <!-- React mounts the demo here: the feed skeleton plus the REAL
-               shell components from @web-butler/ui, scripted through one
-               errand on a loop. -->
+          <!-- React mounts the demo here: faux-page skeletons plus the REAL
+               shell components from @web-butler/ui, scripted through the
+               errands. -->
           <div id="demo-mount"></div>
         </div>
       </div>
+      <!-- Scenario tabs, filled in by the demo. -->
+      <div id="demo-tabs"></div>
     </section>
 
   </main>
