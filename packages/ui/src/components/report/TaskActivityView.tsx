@@ -126,7 +126,6 @@ export function TaskActivityView({
         </h1>
         <p className="webbutler:pt-0.5 webbutler:text-[10px] webbutler:tabular-nums webbutler:text-[var(--wc-text-4)]">
           {host ? `${host} · ` : ''}
-          {task.scope === 'global' ? 'background' : 'this tab'} ·{' '}
           {elapsedLabel(task, now)}
         </p>
       </div>

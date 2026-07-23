@@ -72,11 +72,6 @@ function StatusDot({ task }: { task: Task }) {
   );
 }
 
-/** "This tab" for page questions, "Background" for delegated jobs. */
-function scopeLabel(task: Task): string {
-  return task.scope === "global" ? "Background" : "This tab";
-}
-
 /** "example.com" — where the prompt was sent from, for the meta line. */
 function hostLabel(url: string): string {
   try {
@@ -222,10 +217,11 @@ export function TasksView({
                 {secondary}
               </p>
             ) : null}
-            <p className="webbutler:truncate webbutler:pt-px webbutler:text-[10px] webbutler:text-[var(--wc-text-4)]">
-              {scopeLabel(task)}
-              {host ? ` · ${host}` : ""}
-            </p>
+            {host ? (
+              <p className="webbutler:truncate webbutler:pt-px webbutler:text-[10px] webbutler:text-[var(--wc-text-4)]">
+                {host}
+              </p>
+            ) : null}
           </div>
         </Main>
         {output ? (
