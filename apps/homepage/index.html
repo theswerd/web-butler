@@ -37,31 +37,33 @@
 
   <main>
 
-    <section class="hero">
-      <h1>At your <em>service</em>,<br />on every page.</h1>
-      <p class="lede">
-        Answers, errands, and changes that stick, on any page.
-        Runs on the AI subscription you already have.
-      </p>
-    </section>
-
-    <!-- The signature: the product itself, running four errands on a loop —
-         answering, altering, filling a checkout, and filing a report. -->
-    <section class="demo" aria-label="Demo: Web Butler answering questions, editing pages, filling forms, and generating reports on example sites">
-      <div class="window" data-state="idle" id="demo">
-        <div class="chrome" aria-hidden="true">
-          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-          <span class="addr">help.example</span>
-        </div>
-        <div class="stage">
-          <!-- React mounts the demo here: faux-page skeletons plus the REAL
-               shell components from @web-butler/ui, scripted through the
-               errands. -->
-          <div id="demo-mount"></div>
-        </div>
+    <!-- The claim on the left, the proof on the right: the product itself,
+         running four errands on a loop beside the headline. -->
+    <section class="hero-row">
+      <div class="hero">
+        <h1>At your <em>service</em>,<br />on every page.</h1>
+        <p class="lede">
+          Answers, errands, and changes that stick, on any page.
+          Runs on the AI subscription you already have.
+        </p>
       </div>
-      <!-- Scenario tabs, filled in by the demo. -->
-      <div id="demo-tabs"></div>
+
+      <section class="demo" aria-label="Demo: Web Butler answering questions, editing pages, filling forms, and generating reports on example sites">
+        <div class="window" data-state="idle" id="demo">
+          <div class="chrome" aria-hidden="true">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            <span class="addr">help.example</span>
+          </div>
+          <div class="stage">
+            <!-- React mounts the demo here: faux-page skeletons plus the REAL
+                 shell components from @web-butler/ui, scripted through the
+                 errands. -->
+            <div id="demo-mount"></div>
+          </div>
+        </div>
+        <!-- Scenario tabs, filled in by the demo. -->
+        <div id="demo-tabs"></div>
+      </section>
     </section>
 
     <section class="faq" aria-label="Frequently asked questions">
