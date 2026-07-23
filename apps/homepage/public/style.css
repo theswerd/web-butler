@@ -850,7 +850,31 @@ main {
 }
 .faq details[open] summary::after { transform: rotate(45deg); }
 
+/* Open and close glide instead of snapping. `interpolate-size` lets the
+   height animate to auto; browsers without it just toggle instantly. */
+.faq details {
+  interpolate-size: allow-keywords;
+}
+.faq details::details-content {
+  block-size: 0;
+  overflow-y: clip;
+  transition:
+    block-size 240ms cubic-bezier(0.33, 1, 0.68, 1),
+    content-visibility 240ms allow-discrete;
+}
+.faq details[open]::details-content {
+  block-size: auto;
+}
+/* The answer itself eases down a touch as the drawer opens. */
+.faq details[open] p {
+  transform: translateY(0);
+  opacity: 1;
+}
+
 .faq details p {
+  transform: translateY(-4px);
+  opacity: 0;
+  transition: transform 240ms cubic-bezier(0.33, 1, 0.68, 1), opacity 200ms;
   margin: 0;
   padding: 0 2px 16px;
   max-width: 54ch;
@@ -919,5 +943,9 @@ main {
   .demo-tabs,
   .wordmark:hover .bowtie {
     animation: none;
+  }
+  .faq details::details-content,
+  .faq details p {
+    transition: none;
   }
 }
