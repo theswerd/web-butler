@@ -76,6 +76,20 @@ export default defineContentScript({
           });
         }
 
+        // Typing in the shell must not trip the page's hotkeys ("t" focuses
+        // search on YouTube, "s" on GitHub…). Shadow retargeting makes our
+        // keystrokes reach the page with the host element as their target —
+        // not an input — so sites' "is the user typing?" guards fail and
+        // their shortcuts fire. Absorb keyboard events at the shadow
+        // boundary instead: by the time an event bubbles up here, our React
+        // handlers (attached inside) and our window-capture hotkey
+        // listeners (capture phase runs first) have already seen it; the
+        // page's document/window listeners never do. Events from the page
+        // itself never pass through this shadow root, so they're untouched.
+        for (const type of ['keydown', 'keypress', 'keyup'] as const) {
+          shadow.addEventListener(type, (event) => event.stopPropagation());
+        }
+
         const root = document.createElement('div');
         root.id = 'web-butler-root';
         container.append(root);
