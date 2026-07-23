@@ -62,20 +62,22 @@ function StatusMark({ task }: { task: Task }) {
 
 /**
  * The live task indicator that docks with the prompt, in every tab. Each
- * task is a fixed-size pill (264px: two per row in the 560px shell, with
- * the minimize control alongside) showing the task's status, its prompt,
- * and (while running) the newest line of its activity feed. The size
- * never follows the content — text truncates inside it — so pills don't
- * shift as activity streams in or on hover.
+ * task is a fixed-size pill (190px, element-chip scale) showing its
+ * status dot and prompt; the live activity line and outcome live in the
+ * pill's tooltip and its transcript. Fixed size means nothing shifts on
+ * hover or as activity streams in.
+ *
+ * The root renders `display: contents`, so the pills flow as items of
+ * whatever wrap row the CALLER puts them in — the shell shares one line
+ * between these and the picked-element chips.
  *
  * A pill's body is a click target that REFERENCES the task, the same
  * gesture as referencing a page element: the next message sent goes onto
  * that task's conversation instead of starting a new one. Trailing
  * controls open the transcript and stop/dismiss.
  *
- * The whole strip minimizes to a single count pill (pulsing while
- * anything runs) via the trailing "–" control, for when you want the
- * tasks out of the way but not out of mind.
+ * The trailing "–" tucks the whole strip into a single count pill
+ * (pulsing while anything runs); clicking that expands it again.
  */
 export function TaskStrip({
   tasks,
@@ -100,58 +102,53 @@ export function TaskStrip({
         ? `${running} running${tasks.length > running ? ` · ${tasks.length - running} done` : ''}`
         : `${tasks.length} task${tasks.length === 1 ? '' : 's'}`;
     return (
-      <div className="webbutler:flex webbutler:w-full">
-        <motion.button
-          type="button"
-          layout
-          initial={{ opacity: 0, scale: 0.96 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={SPRING_UI}
-          aria-label={`Show tasks: ${summary}`}
-          aria-expanded={false}
-          onClick={() => setMinimized(false)}
-          className="webbutler:flex webbutler:cursor-pointer webbutler:select-none webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:border webbutler:border-[var(--wc-border)] webbutler:bg-[var(--wc-surface)] webbutler:py-0.5 webbutler:pr-2 webbutler:pl-2 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-[border-color,box-shadow] webbutler:duration-100 webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:shadow-[inset_0_0_0_999px_var(--wc-hover-1)]"
-        >
-          <span className="webbutler:relative webbutler:flex webbutler:size-1.5 webbutler:shrink-0">
-            {running > 0 ? (
-              <motion.span
-                aria-hidden
-                className="webbutler:absolute webbutler:inset-0 webbutler:rounded-full webbutler:bg-[var(--wc-selection)]"
-                animate={{ scale: [1, 2.2], opacity: [0.5, 0] }}
-                transition={{ duration: 1.6, repeat: Infinity, ease: 'easeOut' }}
-              />
-            ) : null}
-            <span
+      <motion.button
+        type="button"
+        layout
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={SPRING_UI}
+        aria-label={`Show tasks: ${summary}`}
+        aria-expanded={false}
+        onClick={() => setMinimized(false)}
+        className="webbutler:flex webbutler:cursor-pointer webbutler:select-none webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:border webbutler:border-[var(--wc-border)] webbutler:bg-[var(--wc-surface)] webbutler:py-0.5 webbutler:pr-2 webbutler:pl-2 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-[border-color,box-shadow] webbutler:duration-100 webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:shadow-[inset_0_0_0_999px_var(--wc-hover-1)]"
+      >
+        <span className="webbutler:relative webbutler:flex webbutler:size-1.5 webbutler:shrink-0">
+          {running > 0 ? (
+            <motion.span
               aria-hidden
-              className={`webbutler:relative webbutler:size-1.5 webbutler:rounded-full ${
-                running > 0 || anyUnseen
-                  ? 'webbutler:bg-[var(--wc-selection)]'
-                  : 'webbutler:bg-[var(--wc-text-3)]'
-              }`}
+              className="webbutler:absolute webbutler:inset-0 webbutler:rounded-full webbutler:bg-[var(--wc-selection)]"
+              animate={{ scale: [1, 2.2], opacity: [0.5, 0] }}
+              transition={{ duration: 1.6, repeat: Infinity, ease: 'easeOut' }}
             />
-          </span>
-          <span className="webbutler:text-[10px] webbutler:font-medium webbutler:text-[var(--wc-text-2)]">
-            {summary}
-          </span>
-        </motion.button>
-      </div>
+          ) : null}
+          <span
+            aria-hidden
+            className={`webbutler:relative webbutler:size-1.5 webbutler:rounded-full ${
+              running > 0 || anyUnseen
+                ? 'webbutler:bg-[var(--wc-selection)]'
+                : 'webbutler:bg-[var(--wc-text-3)]'
+            }`}
+          />
+        </span>
+        <span className="webbutler:text-[10px] webbutler:font-medium webbutler:text-[var(--wc-text-2)]">
+          {summary}
+        </span>
+      </motion.button>
     );
   }
 
   return (
-    <div className="webbutler:flex webbutler:w-full webbutler:flex-wrap webbutler:items-center webbutler:gap-1">
+    <div className="webbutler:contents">
       <AnimatePresence initial={false}>
         {tasks.map((task) => {
           const selected = task.id === selectedId;
           const isRunning = task.status === 'running';
-          // The pill's second line of life, width-capped so a pill never
-          // sprawls: live activity while running, the outcome once done,
-          // an accent "replying" note while referenced.
-          const detail = selected
-            ? 'replying'
-            : isRunning
-              ? (task.activity ?? 'Starting…')
-              : (task.outcome ?? STATUS_LABEL[task.status]);
+          // What the pill can't fit lives in its tooltip: the live
+          // activity while running, the outcome once settled.
+          const detail = isRunning
+            ? (task.activity ?? 'Starting…')
+            : (task.outcome ?? STATUS_LABEL[task.status]);
           return (
             <motion.div
               key={task.id}
@@ -168,13 +165,14 @@ export function TaskStrip({
                   ? `Stop replying to: ${task.prompt}`
                   : `Reply to this task: ${task.prompt}`
               }
+              title={`${task.prompt}\n${detail}`}
               onClick={() => onSelect(task)}
               onKeyDown={(event) => {
                 if (event.key !== 'Enter' && event.key !== ' ') return;
                 event.preventDefault();
                 onSelect(task);
               }}
-              className={`webbutler:group webbutler:flex webbutler:w-[264px] webbutler:max-w-full webbutler:cursor-pointer webbutler:select-none webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:border webbutler:py-0.5 webbutler:pr-0.5 webbutler:pl-2 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-[background-color,border-color,box-shadow] webbutler:duration-100 ${
+              className={`webbutler:group webbutler:flex webbutler:w-[190px] webbutler:max-w-full webbutler:cursor-pointer webbutler:select-none webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:border webbutler:py-0.5 webbutler:pr-0.5 webbutler:pl-2 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-[border-color,box-shadow,color] webbutler:duration-100 ${
                 selected
                   ? 'webbutler:border-[var(--wc-selection)] webbutler:bg-[var(--wc-surface)] webbutler:shadow-[0_0_0_0.5px_var(--wc-selection)]'
                   : // Hover tints ON TOP of the surface (inset shadow) instead
@@ -186,37 +184,16 @@ export function TaskStrip({
             >
               <StatusMark task={task} />
 
+              {/* One text slot: the prompt, accent-inked while referenced
+                  (the ring already marks it; the color makes it read). */}
               <span
-                title={task.prompt}
-                className="webbutler:max-w-[120px] webbutler:shrink-0 webbutler:truncate webbutler:text-[11px] webbutler:leading-4 webbutler:font-medium webbutler:text-[var(--wc-ink)]"
-              >
-                {task.prompt}
-              </span>
-
-              {/* Swaps drift up a few px so changes read as motion, not
-                  flicker. title carries the full text the cap hides. */}
-              <span
-                title={detail}
-                className={`webbutler:min-w-0 webbutler:flex-1 webbutler:truncate webbutler:text-[10px] ${
+                className={`webbutler:min-w-0 webbutler:flex-1 webbutler:truncate webbutler:text-[11px] webbutler:leading-4 webbutler:font-medium ${
                   selected
                     ? 'webbutler:text-[var(--wc-selection)]'
-                    : isRunning
-                      ? 'webbutler:text-[var(--wc-text-4)]'
-                      : 'webbutler:text-[var(--wc-text-3)]'
+                    : 'webbutler:text-[var(--wc-ink)]'
                 }`}
               >
-                <AnimatePresence mode="popLayout" initial={false}>
-                  <motion.span
-                    key={detail}
-                    initial={{ opacity: 0, y: 3 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -3 }}
-                    transition={{ duration: 0.18, ease: 'easeOut' }}
-                    className="webbutler:inline-block webbutler:max-w-full webbutler:truncate webbutler:align-bottom"
-                  >
-                    {detail}
-                  </motion.span>
-                </AnimatePresence>
+                {task.prompt}
               </span>
 
               {/* Transcript: always reachable, quiet until hovered. */}

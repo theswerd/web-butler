@@ -770,41 +770,56 @@ export function App() {
     .filter((task) => task.status === 'running' || !task.seen)
     .slice(0, 4);
 
-  const taskStrip =
-    stripTasks.length > 0 ? (
-      <div className={isTop ? 'webbutler:mt-1.5' : 'webbutler:mb-1.5'}>
-        <TaskStrip
-          tasks={stripTasks}
-          selectedId={replyTaskId}
-          onSelect={(task) =>
-            setReplyTaskId((current) => (current === task.id ? null : task.id))
-          }
-          onOpen={openTaskPanel}
-          onCancel={(task) => cancelTask(task.id)}
-          onDismiss={(task) => markTaskSeen(task.id)}
-        />
+  // Task pills and picked-element chips share ONE wrap row above (or
+  // below) the prompt: pills fill from the left, chips finish the line on
+  // the right. TaskStrip renders `display: contents`, so its pills are
+  // items of this row rather than a nested block.
+  const contextRow =
+    stripTasks.length > 0 || picked.length > 0 ? (
+      <div
+        className={`webbutler:flex webbutler:w-full webbutler:flex-wrap webbutler:items-center webbutler:gap-1 ${
+          isTop ? 'webbutler:mt-1.5' : 'webbutler:mb-1.5'
+        }`}
+      >
+        {stripTasks.length > 0 ? (
+          <TaskStrip
+            tasks={stripTasks}
+            selectedId={replyTaskId}
+            onSelect={(task) =>
+              setReplyTaskId((current) =>
+                current === task.id ? null : task.id,
+              )
+            }
+            onOpen={openTaskPanel}
+            onCancel={(task) => cancelTask(task.id)}
+            onDismiss={(task) => markTaskSeen(task.id)}
+          />
+        ) : null}
+        {picked.length > 0 ? (
+          <div className="webbutler:ml-auto webbutler:min-w-0">
+            <ContextChips
+              elements={picked}
+              missingIds={missingIds}
+              onHover={setHoveredChip}
+              onJump={(element) => {
+                resolvePickedElement(element)?.scrollIntoView({
+                  behavior: 'smooth',
+                  block: 'center',
+                });
+              }}
+              onRemove={(id) => {
+                setPicked((current) =>
+                  current.filter((element) => element.id !== id),
+                );
+                setHoveredChip((current) =>
+                  current?.id === id ? null : current,
+                );
+              }}
+            />
+          </div>
+        ) : null}
       </div>
     ) : null;
-
-  const chips = (
-    <ContextChips
-      elements={picked}
-      missingIds={missingIds}
-      onHover={setHoveredChip}
-      onJump={(element) => {
-        resolvePickedElement(element)?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'center',
-        });
-      }}
-      onRemove={(id) => {
-        setPicked((current) =>
-          current.filter((element) => element.id !== id),
-        );
-        setHoveredChip((current) => (current?.id === id ? null : current));
-      }}
-    />
-  );
 
   return (
     // `wc-dark` flips the --wc-* theme tokens for the whole shell.
@@ -960,15 +975,12 @@ export function App() {
                 ) : null}
               </AnimatePresence>
 
-              {/* Answers + task strip + chips stack away from the screen
-                  edge: above the prompt when docked at the bottom, below
-                  when docked at top. */}
+              {/* Answers + the shared task-pill/element-chip row stack away
+                  from the screen edge: above the prompt when docked at the
+                  bottom, below when docked at top. */}
               {!isTop ? answerSlot : null}
               {!isTop ? gateSlot : null}
-              {!isTop ? taskStrip : null}
-              {picked.length > 0 && !isTop ? (
-                <div className="webbutler:mb-1.5">{chips}</div>
-              ) : null}
+              {!isTop ? contextRow : null}
 
               {onboarding === 'pending' ? (
                 // First run: the onboarding card takes the prompt's place
@@ -1019,10 +1031,7 @@ export function App() {
                 />
               )}
 
-              {picked.length > 0 && isTop ? (
-                <div className="webbutler:mt-1.5">{chips}</div>
-              ) : null}
-              {isTop ? taskStrip : null}
+              {isTop ? contextRow : null}
               {isTop ? gateSlot : null}
               {isTop ? answerSlot : null}
             </motion.div>

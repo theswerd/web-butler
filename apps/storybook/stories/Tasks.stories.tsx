@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import {
+  ContextChips,
   DEFAULT_SETTINGS,
   MenuPanel,
   TaskStrip,
@@ -11,6 +12,7 @@ import {
   type ViewId,
 } from '@web-butler/ui';
 import { useState } from 'react';
+import { SAMPLE_ELEMENTS } from './sample-data';
 
 /**
  * The session's activity list: every run, ongoing or finished, tab-scoped
@@ -272,7 +274,12 @@ function StripDemo() {
   // s2 starts referenced, matching the "replying to this task" state.
   const [selectedId, setSelectedId] = useState<string | null>('s2');
   return (
-    <div style={{ width: 560 }}>
+    // TaskStrip renders `display: contents`; in the shell its pills share
+    // a wrap row with the element chips, so the story provides that row.
+    <div
+      style={{ width: 560 }}
+      className="webbutler:flex webbutler:flex-wrap webbutler:items-center webbutler:gap-1"
+    >
       <TaskStrip
         tasks={tasks}
         selectedId={selectedId}
@@ -293,6 +300,43 @@ function StripDemo() {
           setTasks((current) => current.filter((row) => row.id !== task.id))
         }
       />
+    </div>
+  );
+}
+
+/** The shell's real arrangement: task pills and picked-element chips
+    sharing one wrap row — pills from the left, chips finishing the line
+    on the right. */
+export const StripWithChips: Story = {
+  render: () => <StripWithChipsDemo />,
+};
+
+function StripWithChipsDemo() {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  return (
+    <div
+      style={{ width: 560 }}
+      className="webbutler:flex webbutler:flex-wrap webbutler:items-center webbutler:gap-1"
+    >
+      <TaskStrip
+        tasks={STRIP_TASKS.slice(0, 1)}
+        selectedId={selectedId}
+        onSelect={(task) =>
+          setSelectedId((current) => (current === task.id ? null : task.id))
+        }
+        onOpen={(task) => console.log('open transcript', task.id)}
+        onCancel={(task) => console.log('cancel', task.id)}
+        onDismiss={(task) => console.log('dismiss', task.id)}
+      />
+      <div className="webbutler:ml-auto webbutler:min-w-0">
+        <ContextChips
+          elements={SAMPLE_ELEMENTS.slice(0, 2)}
+          missingIds={new Set<string>()}
+          onHover={() => {}}
+          onJump={() => {}}
+          onRemove={() => {}}
+        />
+      </div>
     </div>
   );
 }
