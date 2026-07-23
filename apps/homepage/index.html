@@ -60,56 +60,10 @@
           <span class="addr">your-feed.example</span>
         </div>
         <div class="stage">
-          <div class="feed" aria-hidden="true">
-            <article class="post">
-              <span class="avatar"></span>
-              <span class="lines"><span class="line w-72"></span><span class="line w-48"></span></span>
-            </article>
-            <article class="post sponsored">
-              <span class="avatar"></span>
-              <span class="lines"><span class="line w-64"></span><span class="line w-56"></span></span>
-              <span class="tag">Sponsored</span>
-            </article>
-            <article class="post">
-              <span class="avatar"></span>
-              <span class="lines"><span class="line w-80"></span><span class="line w-40"></span></span>
-            </article>
-            <article class="post sponsored">
-              <span class="avatar"></span>
-              <span class="lines"><span class="line w-56"></span><span class="line w-64"></span></span>
-              <span class="tag">Sponsored</span>
-            </article>
-          </div>
-
-          <div class="butler" aria-hidden="true">
-            <div class="card">
-              <div class="card-head">
-                <svg class="bowtie" viewBox="0 0 24 24">
-                  <g class="bt-orbit">
-                    <path class="bt-wing bt-l" d="M3 8.2 H9.6 L11.6 12 L9.6 15.8 H3 L5.2 12 Z" />
-                    <path class="bt-wing bt-r" d="M21 8.2 H14.4 L12.4 12 L14.4 15.8 H21 L18.8 12 Z" />
-                  </g>
-                  <rect class="bt-knot" x="10.7" y="9.8" width="2.6" height="4.4" rx="0.5" />
-                </svg>
-                <span class="card-title">Hide sponsored posts</span>
-                <span class="switch"><span class="thumb"></span></span>
-              </div>
-              <p class="card-sub">Installed on your-feed.example. Reapplies on every visit.</p>
-            </div>
-            <div class="pill">
-              <svg class="bowtie" viewBox="0 0 24 24">
-                <g class="bt-orbit">
-                  <path class="bt-wing bt-l" d="M3 8.2 H9.6 L11.6 12 L9.6 15.8 H3 L5.2 12 Z" />
-                  <path class="bt-wing bt-r" d="M21 8.2 H14.4 L12.4 12 L14.4 15.8 H21 L18.8 12 Z" />
-                </g>
-                <rect class="bt-knot" x="10.7" y="9.8" width="2.6" height="4.4" rx="0.5" />
-              </svg>
-              <span class="prompt"><span class="typed" id="typed"></span><span class="caret"></span><span class="hint">Ask anything</span><span class="status">Working&hellip;</span></span>
-              <span class="send">
-                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 12.5v-9M4.5 7 8 3.5 11.5 7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </span>
-            </div>
-          </div>
+          <!-- React mounts the demo here: the feed skeleton plus the REAL
+               shell components from @web-butler/ui, scripted through one
+               errand on a loop. -->
+          <div id="demo-mount"></div>
         </div>
       </div>
       <p class="demo-caption">An actual errand: &ldquo;always hide this&rdquo; becomes a page extension that holds on every future visit.</p>
@@ -195,6 +149,6 @@
     <p>Web Butler &middot; <a href="https://github.com/theswerd/web-butler">open source</a> &middot; under active tailoring</p>
   </footer>
 
-  <script src="/script.js"></script>
+  <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>

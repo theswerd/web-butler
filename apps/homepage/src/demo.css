@@ -1,0 +1,5 @@
+/* The shared package sheet brings Tailwind (webbutler: prefix), the design
+   tokens under #web-butler-root, and its own @source registration — the
+   same pipeline the extension and Storybook use. */
+@import '@web-butler/ui/style.css';
+@source './';

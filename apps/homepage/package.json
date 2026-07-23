@@ -1,0 +1,26 @@
+{
+  "name": "@web-butler/homepage",
+  "description": "Marketing homepage at butler.swerdlow.dev; the demo runs the real shell components",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 4180",
+    "build": "vite build",
+    "compile": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@web-butler/ui": "*",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.11",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.2",
+    "tailwindcss": "^4.1.11",
+    "typescript": "^5.9.3",
+    "vite": "^8.1.5"
+  }
+}
