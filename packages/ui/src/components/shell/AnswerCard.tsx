@@ -11,7 +11,7 @@ import {
   HiXMark,
 } from 'react-icons/hi2';
 import { SPRING_UI } from '../../lib/motion';
-import { MarkdownLite } from '../MarkdownLite';
+import { Markdown } from '../Markdown';
 import { hostsLabel, Toggle } from './views/ExtensionsView';
 
 /**
@@ -52,7 +52,7 @@ import type { AnswerTier } from '../../lib/shell';
 
 export type AnswerCardProps = {
   tier: AnswerTier;
-  /** Markdown-lite: paragraphs, `code`, **bold**, "- " lists, ``` blocks.
+  /** Markdown (GFM): tables, images, task lists, code, and the rest.
       Extension tier: the verb — "Installed" or "Updated". */
   text: string;
   /** Artifact name on the handoff card / the extension's name. */
@@ -350,7 +350,7 @@ export function AnswerCard({
     >
       {/* Body — chromeless; scrolls inside the capped frame. */}
       <div className="webbutler:max-h-[188px] webbutler:overflow-y-auto webbutler:px-3.5 webbutler:py-2.5">
-        <MarkdownLite text={text} />
+        <Markdown text={text} />
 
         {/* Multiple-choice follow-up: the agent needs a decision to act.
             Same selection language as the settings panel: quiet rows, no

@@ -34,6 +34,12 @@ export const PricingTable: Story = {
   render: () => <SidePanelFrame fixtureId="artifact-pricing-table" />,
 };
 
+/** The full GFM spread: headings, image, table with alignment, task list,
+    strikethrough, blockquote — everything the renderer now supports. */
+export const RichMarkdown: Story = {
+  render: () => <SidePanelFrame fixtureId="artifact-monitor-comparison" />,
+};
+
 export const Userscript: Story = {
   render: () => <SidePanelFrame fixtureId="artifact-userscript" />,
 };

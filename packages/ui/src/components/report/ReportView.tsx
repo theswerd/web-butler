@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { HiCheck, HiClipboard } from 'react-icons/hi2';
 import { BowtieMark } from '../shell/BowtieMark';
-import { MarkdownLite } from '../MarkdownLite';
+import { Markdown } from '../Markdown';
 
 /**
  * Full report surface for the Chrome side panel (chrome.sidePanel API).
@@ -18,7 +18,7 @@ export type ReportViewProps = {
   description?: string;
   /** e.g. "youtube.com — 4:12 PM" — where and when the report was produced. */
   meta?: string;
-  /** Markdown-lite body. */
+  /** Markdown body (GFM: tables, images, task lists). */
   text: string;
 };
 
@@ -76,7 +76,7 @@ export function ReportView({ title, description, meta, text }: ReportViewProps) 
 
       {/* Body */}
       <div className="webbutler:min-h-0 webbutler:flex-1 webbutler:overflow-y-auto webbutler:px-4 webbutler:py-3">
-        <MarkdownLite text={text} />
+        <Markdown text={text} />
       </div>
     </div>
   );

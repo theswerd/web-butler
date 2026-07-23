@@ -9,7 +9,7 @@ import {
 } from 'react-icons/hi2';
 import type { Task, TaskUpdate } from '../../lib/shell';
 import { BowtieMark } from '../shell/BowtieMark';
-import { MarkdownLite } from '../MarkdownLite';
+import { Markdown } from '../Markdown';
 
 /**
  * Side-panel surface for one task's live activity: the prompt up top, the
@@ -197,7 +197,7 @@ export function TaskActivityView({
               </div>
             ) : (
               <div key={index} className={spacing}>
-                <MarkdownLite text={update.text} />
+                <Markdown text={update.text} />
               </div>
             );
           })}

@@ -15,7 +15,7 @@ export * from './lib/view-transitions';
 export * from './fixtures/answers';
 
 // --- components ---------------------------------------------------------------
-export * from './components/MarkdownLite';
+export * from './components/Markdown';
 export * from './components/PromptPanel';
 export * from './components/SharedElement';
 export * from './components/report/ReportView';

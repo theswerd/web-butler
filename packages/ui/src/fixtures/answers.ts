@@ -18,7 +18,7 @@ export type AnswerFixture = {
   title?: string;
   /** Artifact one-liner — what the report is. */
   description?: string;
-  /** Canned response, markdown-lite. */
+  /** Canned response, markdown (GFM: tables, images, task lists). */
   text: string;
   /** Answer tier: suggested follow-up prompts (chips that prefill the input). */
   hints?: string[];
@@ -150,15 +150,42 @@ The video alone accounts for about 60% of the load time on a fast connection.`,
     description: 'All three tiers extracted as markdown, annual rates.',
     text: `Extracted from \`#pricing\`: three tiers, annual billing shown:
 
-\`\`\`
-| Plan       | Price/mo | Seats     | Support        |
-|------------|----------|-----------|----------------|
-| Free       | $0       | 1         | Community      |
-| Pro        | $19      | Up to 10  | Email, 24h SLA |
-| Enterprise | Custom   | Unlimited | Dedicated CSM  |
-\`\`\`
+| Plan | Price/mo | Seats | Support |
+|------|---------:|-------|---------|
+| Free | $0 | 1 | Community |
+| Pro | $19 | Up to 10 | Email, 24h SLA |
+| Enterprise | Custom | Unlimited | Dedicated CSM |
 
 Note: the page shows monthly prices only after toggling. These are the **annual** rates. The Enterprise row links to a contact form rather than a checkout.`,
+  },
+  {
+    id: 'artifact-monitor-comparison',
+    tier: 'artifact',
+    prompt: 'compare the three monitors on this page',
+    title: 'Monitor comparison',
+    description: 'The three 27-inch monitors, specs and verdict.',
+    text: `## The short version
+
+The **ProView 27** is the pick unless you need USB-C power delivery, where only the Studio Display qualifies.
+
+![Monitor on a desk](https://picsum.photos/seed/webbutler-monitor/640/320)
+
+## Side by side
+
+| Spec | ProView 27 | Studio Display | PixelMax Q |
+|------|-----------|----------------|------------|
+| Panel | IPS, 165 Hz | IPS, 60 Hz | VA, 144 Hz |
+| Resolution | 1440p | 5K | 4K |
+| USB-C PD | ~~90 W~~ none | 96 W | 15 W |
+| Price | **$379** | $1,599 | $529 |
+
+## Before you buy
+
+- [x] Confirmed the ProView price includes the stand
+- [x] Checked all three are in stock at this store
+- [ ] Ask about the dead-pixel return window: the listing doesn't say
+
+> The PixelMax listing shows last year's model in the photos; the Q revision has a different port layout.`,
   },
   {
     id: 'artifact-userscript',
