@@ -38,6 +38,7 @@ import { getGrokAuthStatus, startGrokDeviceLogin } from './grok-auth';
 import { db, hasDatabaseUrl } from './db';
 import { extension, report, sandbox, task } from './db/schema';
 import { getFreestyle } from './freestyle';
+import { withSandboxVm } from './sandbox-heal';
 
 if (!hasDatabaseUrl) {
   console.error(
@@ -246,6 +247,17 @@ async function sandboxVmIdForSession(
 }
 
 /**
+ * What a status endpoint says when the sandbox can't answer even after
+ * healing. Returned as a 200 `failed` state (not a raw 500) so the
+ * extension shows a truthful, retryable message instead of concluding the
+ * server itself is unreachable.
+ */
+const SANDBOX_DOWN = {
+  status: 'failed',
+  error: 'The sandbox is unavailable right now',
+} as const;
+
+/**
  * Codex onboarding: start a ChatGPT device-code login on the user's VM.
  * Responds with the code to show the user; completion is polled via the
  * status endpoint. Calling again abandons the previous attempt.
@@ -285,7 +297,9 @@ app.post(
         : c.json({ error: 'No sandbox. Initialize first.' }, 409);
     }
     try {
-      return c.json(await startCodexDeviceLogin(result.vmId));
+      return c.json(
+        await withSandboxVm(result.userId, result.vmId, startCodexDeviceLogin),
+      );
     } catch (error) {
       console.error('[codex] device login start failed:', error);
       // OpenAI rate-limits device-code minting per network; tell the user
@@ -332,7 +346,14 @@ app.get(
         ? c.json({ error: 'Unauthorized' }, 401)
         : c.json({ error: 'No sandbox. Initialize first.' }, 409);
     }
-    return c.json(await getCodexAuthStatus(result.vmId));
+    try {
+      return c.json(
+        await withSandboxVm(result.userId, result.vmId, getCodexAuthStatus),
+      );
+    } catch (error) {
+      console.error('[codex] status check failed:', error);
+      return c.json(SANDBOX_DOWN);
+    }
   },
 );
 
@@ -375,7 +396,9 @@ app.post(
         : c.json({ error: 'No sandbox. Initialize first.' }, 409);
     }
     try {
-      return c.json(await startGrokDeviceLogin(result.vmId));
+      return c.json(
+        await withSandboxVm(result.userId, result.vmId, startGrokDeviceLogin),
+      );
     } catch (error) {
       console.error('[grok] device login start failed:', error);
       // x.ai rate-limits code minting too ("slow_down" / HTTP 429).
@@ -422,7 +445,14 @@ app.get(
         ? c.json({ error: 'Unauthorized' }, 401)
         : c.json({ error: 'No sandbox. Initialize first.' }, 409);
     }
-    return c.json(await getGrokAuthStatus(result.vmId));
+    try {
+      return c.json(
+        await withSandboxVm(result.userId, result.vmId, getGrokAuthStatus),
+      );
+    } catch (error) {
+      console.error('[grok] status check failed:', error);
+      return c.json(SANDBOX_DOWN);
+    }
   },
 );
 
@@ -467,7 +497,9 @@ app.post(
         : c.json({ error: 'No sandbox. Initialize first.' }, 409);
     }
     try {
-      return c.json(await startClaudeLogin(result.vmId));
+      return c.json(
+        await withSandboxVm(result.userId, result.vmId, startClaudeLogin),
+      );
     } catch (error) {
       console.error('[claude] login start failed:', error);
       return c.json({ error: 'Could not start the sign-in' }, 502);
@@ -511,7 +543,11 @@ app.post(
     const body = await c.req.json().catch(() => null);
     const code = typeof body?.code === 'string' ? body.code.trim() : '';
     if (!code) return c.json({ error: 'Missing code' }, 400);
-    return c.json(await submitClaudeLoginCode(result.vmId, code));
+    return c.json(
+      await withSandboxVm(result.userId, result.vmId, (vmId) =>
+        submitClaudeLoginCode(vmId, code),
+      ),
+    );
   },
 );
 
@@ -544,7 +580,14 @@ app.get(
         ? c.json({ error: 'Unauthorized' }, 401)
         : c.json({ error: 'No sandbox. Initialize first.' }, 409);
     }
-    return c.json(await getClaudeAuthStatus(result.vmId));
+    try {
+      return c.json(
+        await withSandboxVm(result.userId, result.vmId, getClaudeAuthStatus),
+      );
+    } catch (error) {
+      console.error('[claude] status check failed:', error);
+      return c.json(SANDBOX_DOWN);
+    }
   },
 );
 
@@ -1292,7 +1335,6 @@ app.post(
       return c.json({ error: 'provider and prompt are required' }, 400);
     }
     const { provider, prompt, page, taskId, openTabs } = body.data;
-    const vmId = result.vmId;
     const userId = result.userId;
 
     // Cross-conversation context for the envelope: the full extension
@@ -1328,8 +1370,13 @@ app.post(
     // Mirror the stored work onto the VM so the agent can READ it: each
     // extension's current script (the ground truth for updates/merges) and
     // each report's markdown (for "like that report from earlier"). The
-    // envelope below lists the file paths.
-    await syncTurnContext(vmId, allExtensions, reportRows);
+    // envelope below lists the file paths. This is also the turn's first VM
+    // touch, so it doubles as the heal point: a deleted VM gets replaced
+    // here and the rest of the turn runs against the fresh one.
+    const vmId = await withSandboxVm(userId, result.vmId, async (id) => {
+      await syncTurnContext(id, allExtensions, reportRows);
+      return id;
+    });
 
     const clip = (text: string, max: number) =>
       text.length > max ? `${text.slice(0, max - 3)}…` : text;
@@ -1526,6 +1573,7 @@ app.post(
               text: reply,
               outcomes,
               suggestions: read.suggestions,
+              highlights: read.highlights,
             });
           })
           .catch((error: unknown) => {

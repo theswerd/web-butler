@@ -4,14 +4,17 @@ import {
   DEFAULT_SHELL_PERSIST,
   MESSAGE,
   type ShellPersist,
+  type WebButlerMessage,
 } from '@web-butler/ui/shell';
 
 /**
- * Tab-scoped shell state (open/collapsed, draft text, menu).
+ * Shell state (open/collapsed, draft text, menu).
  *
- * Lives in the background under `chrome.storage.session`, keyed by tab id —
- * so it survives content-script remounts on reload/navigation, but each tab
- * keeps its own copy. Cleared when the tab closes or the browser session ends.
+ * Lives in the background under `chrome.storage.session` — so it survives
+ * content-script remounts on reload/navigation. Draft/menu are keyed by tab
+ * id (each tab keeps its own); `mode` is session-wide: closing the butler in
+ * one tab closes it everywhere, and the background broadcasts flips from
+ * other tabs via SHELL_MODE_CHANGED so live shells follow along.
  */
 export function useShellPersist(): [
   ShellPersist | null,
@@ -35,6 +38,22 @@ export function useShellPersist(): [
     return () => {
       mounted = false;
     };
+  }, []);
+
+  // Another tab flipped the shared mode — apply it locally, WITHOUT echoing
+  // a SHELL_PATCH back (the background already persisted it; echoing would
+  // re-broadcast in a loop).
+  useEffect(() => {
+    const onMessage = (message: WebButlerMessage) => {
+      if (message?.type !== MESSAGE.SHELL_MODE_CHANGED) return;
+      setState((current) =>
+        current && current.mode !== message.mode
+          ? { ...current, mode: message.mode }
+          : current,
+      );
+    };
+    browser.runtime.onMessage.addListener(onMessage);
+    return () => browser.runtime.onMessage.removeListener(onMessage);
   }, []);
 
   const patch = useCallback((partial: Partial<ShellPersist>) => {

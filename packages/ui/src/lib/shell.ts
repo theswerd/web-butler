@@ -39,6 +39,21 @@ export type RunScope = 'tab' | 'global';
  */
 export type RunStatus = 'working' | 'delegated' | 'done';
 
+/**
+ * A page section the agent flagged: a CSS selector plus a short markdown
+ * note (what this is, why it's flagged). Rendered as a quiet marker
+ * overlay — distinct from the user's picked-element highlights — and
+ * navigated via `highlight:` links in answer/report markdown. Nothing
+ * scrolls proactively; a click is the only way focus moves.
+ */
+export type PageHighlight = {
+  id: string;
+  /** CSS selector, resolved against the page the prompt was sent from. */
+  selector: string;
+  /** Short markdown shown in the marker's note card while focused. */
+  note?: string;
+};
+
 /** What an AnswerCard renders — mirrors its props, minus the callbacks. */
 export type RunResult = {
   tier: AnswerTier;
@@ -57,6 +72,8 @@ export type RunResult = {
   choices?: string[];
   choiceMode?: 'single' | 'multi';
   choiceSubmitLabel?: string;
+  /** Sections of the origin page the agent flagged with this answer. */
+  highlights?: PageHighlight[];
 };
 
 export type Run = {
@@ -271,7 +288,12 @@ export function classifyRunScope(prompt: string): RunScope {
     : 'tab';
 }
 
-/** Per-tab UI state that should survive navigations within the same tab. */
+/**
+ * Shell UI state that survives navigations. Per-tab EXCEPT `mode`: the
+ * open/collapsed state is session-wide — closing the butler in one tab
+ * closes it in all of them (the background owns the shared value and
+ * broadcasts flips via SHELL_MODE_CHANGED).
+ */
 export type ShellPersist = {
   mode: ShellMode;
   draft: string;
@@ -291,6 +313,10 @@ export const MESSAGE = {
   SET_OPEN: 'web-butler/set-open',
   SHELL_GET: 'web-butler/shell-get',
   SHELL_PATCH: 'web-butler/shell-patch',
+  /** Background → every tab: the session-wide open/collapsed mode flipped
+      (someone closed or opened the butler somewhere). Shells apply it to
+      local state without echoing a SHELL_PATCH back. */
+  SHELL_MODE_CHANGED: 'web-butler/shell-mode-changed',
   // Runs: content → background.
   /** Start a run from a prompt. Responds with the created Run (scope decided). */
   RUN_START: 'web-butler/run-start',
@@ -375,6 +401,13 @@ export const MESSAGE = {
   // Browser control: background → origin tab (the ghost cursor stage).
   /** Drive the in-page ghost cursor one step (move / press / type / hide). */
   BROWSER_CURSOR: 'web-butler/browser-cursor',
+  /** Settings' "Erase everything": wipe all local state (identity, settings,
+      tasks, site extensions) and reload the extension — every tab comes back
+      on the first-run sign-in. */
+  RESET_ALL: 'web-butler/reset-all',
+  /** A highlight: link was clicked in the side panel — relayed to the
+      active tab's shell, which scrolls to and focuses that marker. */
+  HIGHLIGHT_FOCUS: 'web-butler/highlight-focus',
 } as const;
 
 /** The extension list plus whether Chrome will actually inject them. */
@@ -422,6 +455,7 @@ export type WebButlerMessage =
   | { type: typeof MESSAGE.SET_OPEN; open: boolean }
   | { type: typeof MESSAGE.SHELL_GET }
   | { type: typeof MESSAGE.SHELL_PATCH; patch: Partial<ShellPersist> }
+  | { type: typeof MESSAGE.SHELL_MODE_CHANGED; mode: ShellMode }
   | {
       type: typeof MESSAGE.RUN_START;
       prompt: string;
@@ -467,4 +501,6 @@ export type WebButlerMessage =
       reason: string;
     }
   | { type: typeof MESSAGE.USER_SCRIPTS_SETTINGS_OPEN }
-  | { type: typeof MESSAGE.BROWSER_CURSOR; cursor: CursorCommand };
+  | { type: typeof MESSAGE.BROWSER_CURSOR; cursor: CursorCommand }
+  | { type: typeof MESSAGE.RESET_ALL }
+  | { type: typeof MESSAGE.HIGHLIGHT_FOCUS; highlightId: string };

@@ -1,11 +1,5 @@
 import { motion } from "motion/react";
-import {
-  useId,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type ReactNode,
-} from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import { HiArrowTopRightOnSquare } from "react-icons/hi2";
 import type { Settings } from "../../../lib/settings";
 import type { ProviderAuth } from "../../../lib/shell";
@@ -15,7 +9,8 @@ import {
   FreestyleLogo,
   GrokLogo,
 } from "../provider-logos";
-import { ViewHeader } from "./ViewHeader";
+import { useRovingRows } from "./useRovingRows";
+import { MiniButton, ViewBody, ViewFrame } from "./ViewHeader";
 
 const ROW_COUNT = 4;
 
@@ -58,49 +53,16 @@ export function ProvidersView({
   onClaudeSubmitCode,
   onExitLeft,
 }: ProvidersViewProps) {
-  const rowRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const { rowRefs, focusRow, rowKeyDown } = useRovingRows(
+    ROW_COUNT,
+    onExitLeft,
+  );
   const keyInputRef = useRef<HTMLInputElement | null>(null);
   const claudeCodeRef = useRef<HTMLInputElement | null>(null);
   // Claude's reverse flow: the pasted code lives here until submitted.
   const [claudeCode, setClaudeCode] = useState("");
   // layoutId namespace — Storybook renders several instances at once.
   const uid = useId();
-
-  const focusRow = (index: number) => {
-    const next = ((index % ROW_COUNT) + ROW_COUNT) % ROW_COUNT;
-    rowRefs.current[next]?.focus();
-  };
-
-  const rowKeyDown =
-    (index: number, activate: () => void) =>
-    (event: KeyboardEvent<HTMLDivElement>) => {
-      if (event.defaultPrevented) return;
-      const target = event.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
-
-      switch (event.key) {
-        case "ArrowDown":
-          event.preventDefault();
-          focusRow(index + 1);
-          break;
-        case "ArrowUp":
-          event.preventDefault();
-          focusRow(index - 1);
-          break;
-        case "ArrowLeft":
-          event.preventDefault();
-          onExitLeft?.();
-          break;
-        case "ArrowRight":
-        case "Enter":
-        case " ":
-          event.preventDefault();
-          activate();
-          break;
-        default:
-          break;
-      }
-    };
 
   const row = (
     index: number,
@@ -111,9 +73,7 @@ export function ProvidersView({
     hint?: string,
   ) => (
     <div
-      ref={(el) => {
-        rowRefs.current[index] = el;
-      }}
+      ref={rowRefs(index)}
       tabIndex={-1}
       data-wc-row
       onKeyDown={rowKeyDown(index, activate)}
@@ -137,9 +97,6 @@ export function ProvidersView({
       ) : null}
     </div>
   );
-
-  const buttonClass =
-    "webbutler:shrink-0 webbutler:cursor-pointer webbutler:rounded-md webbutler:border webbutler:border-[var(--wc-border)] webbutler:px-2 webbutler:py-0.5 webbutler:text-[10px] webbutler:text-[var(--wc-ink)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:bg-[var(--wc-hover-1)]";
 
   /**
    * The connected control is the radio: the active row wears the sliding
@@ -225,18 +182,13 @@ export function ProvidersView({
       ) : auth.status === "connected" ? (
         connectedControl(id)
       ) : (
-        <button
-          type="button"
-          tabIndex={-1}
-          onClick={activate}
-          className={buttonClass}
-        >
+        <MiniButton onClick={activate}>
           {auth.status === "starting"
             ? "Connecting…"
             : auth.status === "failed" || auth.status === "expired"
               ? "Retry"
               : "Connect"}
-        </button>
+        </MiniButton>
       );
 
     const hint =
@@ -309,9 +261,8 @@ export function ProvidersView({
   };
 
   return (
-    <div className="webbutler:flex webbutler:h-full webbutler:flex-col">
-      <ViewHeader label="Providers" />
-      <div className="webbutler:min-h-0 webbutler:flex-1 webbutler:overflow-y-auto webbutler:pb-1.5 webbutler:pt-0.5">
+    <ViewFrame label="Providers">
+      <ViewBody>
         {row(
           0,
           <ChatGptLogo />,
@@ -364,14 +315,14 @@ export function ProvidersView({
               if (event.key === "ArrowUp" || event.key === "ArrowDown") {
                 // Leave the input, back onto the row for roving.
                 event.preventDefault();
-                rowRefs.current[3]?.focus();
+                focusRow(3);
               }
             }}
             className="webbutler:w-[140px] webbutler:shrink-0 webbutler:rounded-md webbutler:border webbutler:border-[var(--wc-border)] webbutler:bg-transparent webbutler:px-1.5 webbutler:py-0.5 webbutler:text-[10px] webbutler:text-[var(--wc-ink)] webbutler:outline-none webbutler:placeholder:text-[var(--wc-text-4)] webbutler:focus:border-[var(--wc-border-strong)]"
           />,
           "Provided by the platform. Leave empty to use the built-in key.",
         )}
-      </div>
-    </div>
+      </ViewBody>
+    </ViewFrame>
   );
 }

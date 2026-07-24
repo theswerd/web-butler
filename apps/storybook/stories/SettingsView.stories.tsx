@@ -23,6 +23,9 @@ function SettingsViewDemo() {
           setSettings((current) => ({ ...current, ...patch }))
         }
         focused
+        // Real one wipes storage + reloads the extension; click twice to see
+        // the armed (red) confirm state.
+        onResetAll={() => console.log('erase everything')}
       />
     </div>
   );

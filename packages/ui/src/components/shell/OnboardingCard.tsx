@@ -81,6 +81,12 @@ type OnboardingCardProps = {
    * onboarding has no skip — connecting a provider is the only way through.
    */
   onSkip?: () => void;
+  /**
+   * Gate only: "Switch provider" on a failed/expired sign-in — opens the
+   * Providers view so a different account can take over. Full onboarding
+   * doesn't need it ("Back" returns to the provider choice).
+   */
+  onSwitchProvider?: () => void;
   /** Finished (connected + acknowledged) — swap back to the prompt. */
   onDone: () => void;
   /**
@@ -170,6 +176,7 @@ export function OnboardingCard({
   isThisPage,
   userScriptsEnabled,
   onOpenUserScriptsSettings,
+  onSwitchProvider,
 }: OnboardingCardProps) {
   const gate = variant === 'gate';
   const [phase, setPhase] = useState<Phase>(gate ? 'connect' : 'welcome');
@@ -423,6 +430,17 @@ export function OnboardingCard({
                 >
                   <motion.span layout="position">Try again</motion.span>
                 </motion.button>
+                {/* Post-setup, this provider may just be the wrong horse —
+                    offer the stable. Onboarding's "Back" covers it there. */}
+                {gate && onSwitchProvider ? (
+                  <button
+                    type="button"
+                    onClick={onSwitchProvider}
+                    className={GHOST_BUTTON}
+                  >
+                    Switch provider
+                  </button>
+                ) : null}
                 {ghostAction}
               </div>
             </>
@@ -602,14 +620,9 @@ export function OnboardingCard({
         </div>
       ) : phase === 'permissions' ? (
         <div>
+          {/* No provider logo past the connect step — the sign-in is done;
+              these closing steps are Web Butler's, not the model company's. */}
           <div className="webbutler:flex webbutler:items-center webbutler:gap-2">
-            <motion.span
-              layoutId={logoId(provider)}
-              transition={SPRING_UI}
-              className="webbutler:flex webbutler:text-[var(--wc-ink)]"
-            >
-              <Logo size={15} />
-            </motion.span>
             <motion.h2
               {...fade}
               className="webbutler:text-[13px] webbutler:font-semibold webbutler:text-[var(--wc-ink)]"
@@ -655,13 +668,6 @@ export function OnboardingCard({
       ) : (
         <div>
           <div className="webbutler:flex webbutler:items-center webbutler:gap-2">
-            <motion.span
-              layoutId={logoId(provider)}
-              transition={SPRING_UI}
-              className="webbutler:flex webbutler:text-[var(--wc-ink)]"
-            >
-              <Logo size={15} />
-            </motion.span>
             <motion.h2
               {...fade}
               className="webbutler:text-[14px] webbutler:font-semibold webbutler:text-[var(--wc-ink)]"

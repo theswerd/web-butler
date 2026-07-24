@@ -13,6 +13,14 @@ export default defineContentScript({
   runAt: 'document_start',
 
   async main(ctx) {
+    // A previous build's host may still be on the page: extension reloads
+    // orphan manifest-injected scripts, and the background re-executes this
+    // file into open tabs (remountContentScripts). The zombie shell still
+    // renders but can't reach the background anymore — replace it.
+    for (const stale of document.querySelectorAll('web-butler')) {
+      stale.remove();
+    }
+
     const ui = await createShadowRootUi(ctx, {
       name: 'web-butler',
       position: 'modal',

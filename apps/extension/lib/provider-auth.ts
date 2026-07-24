@@ -36,30 +36,51 @@ export function useProviderAuth(
       );
   }, [startMessage]);
 
-  // Fetch the real state the first time it's needed.
+  // Fetch the real state the first time it's needed. 'unknown' renders as
+  // a loading state ("Checking…"), so it must never be terminal: the
+  // background answers 'unknown' whenever the server or sandbox isn't
+  // reachable yet (it deliberately doesn't cache that), and a single
+  // no-answer fetch used to park the row on Checking… forever. Retry with
+  // backoff — dev servers and cold VMs come up in seconds — and if it
+  // still can't answer, degrade to a retryable fail.
   useEffect(() => {
     if (!active || auth.status !== 'unknown') return;
     let cancelled = false;
-    void browser.runtime
-      .sendMessage({ type: statusMessage })
-      .then((next: ProviderAuth) => {
-        if (cancelled || !next) return;
+    let attempt = 0;
+    let timer: number | undefined;
+
+    const giveUp = () =>
+      setAuth((current) =>
+        current.status === 'unknown'
+          ? { status: 'failed', error: 'Could not reach the server' }
+          : current,
+      );
+    const settleOrRetry = (next: ProviderAuth | undefined) => {
+      if (cancelled) return;
+      if (next && next.status !== 'unknown') {
         // The fetch can resolve slowly (cold VM); never clobber a state
         // that a Connect click has moved along in the meantime.
         setAuth((current) => (current.status === 'unknown' ? next : current));
-      })
-      .catch(() => {
-        // 'unknown' renders as a loading state — a dead fetch must not
-        // leave the row checking forever, so degrade to a retryable fail.
-        if (cancelled) return;
-        setAuth((current) =>
-          current.status === 'unknown'
-            ? { status: 'failed', error: 'Server unreachable' }
-            : current,
-        );
-      });
+        return;
+      }
+      attempt += 1;
+      if (attempt >= 5) {
+        giveUp();
+        return;
+      }
+      timer = window.setTimeout(fetchStatus, 2000 * attempt);
+    };
+    const fetchStatus = () => {
+      void browser.runtime.sendMessage({ type: statusMessage }).then(
+        (next: ProviderAuth) => settleOrRetry(next),
+        // A rejected message (no background at all) retries the same way.
+        () => settleOrRetry(undefined),
+      );
+    };
+    fetchStatus();
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [active, auth.status, statusMessage]);
 

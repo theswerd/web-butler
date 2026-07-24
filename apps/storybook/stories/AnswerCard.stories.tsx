@@ -101,6 +101,28 @@ export const Answer: Story = {
   ),
 };
 
+/**
+ * Click the card body to reference the answer — it gets the same outline
+ * as a referenced task pill, and the next message continues its task.
+ * Clicking again (or a text selection / a control click) leaves it alone.
+ */
+export const AnswerReferenced: Story = {
+  render: function AnswerReferencedDemo() {
+    const [selected, setSelected] = useState(true);
+    return (
+      <div style={{ width: 560 }}>
+        <AnswerCard
+          tier="answer"
+          text={SHORT_ANSWER}
+          selected={selected}
+          onSelect={() => setSelected((current) => !current)}
+          onDismiss={() => console.log('[storybook] dismiss')}
+        />
+      </div>
+    );
+  },
+};
+
 /** Answer with follow-up hint chips — clicking one prefills the prompt. */
 export const AnswerWithHints: Story = {
   render: () => (

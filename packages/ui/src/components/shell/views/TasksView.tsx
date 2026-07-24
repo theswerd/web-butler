@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   HiArrowPath,
   HiDocumentText,
@@ -7,18 +6,16 @@ import {
   HiOutlineTrash,
 } from "react-icons/hi2";
 import type { Task } from "../../../lib/shell";
-import { HeaderSearch, ViewHeader } from "./ViewHeader";
-
-/** "just now", "4m", "2h", "3d" — compact, list-friendly. */
-export function timeAgo(timestamp: number, now = Date.now()): string {
-  const seconds = Math.max(0, Math.round((now - timestamp) / 1000));
-  if (seconds < 60) return "just now";
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.round(hours / 24)}d`;
-}
+import { ListRow, RowIconButton, RowTime, timeAgo } from "./ListRow";
+import {
+  HeaderAction,
+  HeaderSearch,
+  ListNote,
+  useListSearch,
+  ViewBody,
+  ViewEmpty,
+  ViewFrame,
+} from "./ViewHeader";
 
 type TasksViewProps = {
   tasks: Task[];
@@ -97,37 +94,21 @@ export function TasksView({
   onRemove,
   onClear,
 }: TasksViewProps) {
-  const [query, setQuery] = useState("");
+  // Search filters by what you asked, what came back, and where.
+  const { query, setQuery, shown } = useListSearch(tasks, (task) =>
+    [task.prompt, task.outcome ?? "", task.url].join("\n"),
+  );
 
   if (tasks.length === 0) {
     return (
-      <div className="webbutler:flex webbutler:h-full webbutler:flex-col">
-        <ViewHeader label="Tasks" />
-        <div className="webbutler:flex webbutler:flex-1 webbutler:flex-col webbutler:items-center webbutler:justify-center webbutler:gap-1.5 webbutler:px-4 webbutler:text-center">
-          <HiOutlineClock
-            size={16}
-            aria-hidden
-            className="webbutler:text-[var(--wc-text-4)]"
-          />
-          <p className="webbutler:text-[11px] webbutler:text-[var(--wc-text-3)]">
-            Nothing yet. Everything you ask for shows up here: in progress and
-            done.
-          </p>
-        </div>
-      </div>
+      <ViewFrame label="Tasks">
+        <ViewEmpty icon={HiOutlineClock}>
+          Nothing yet. Everything you ask for shows up here: in progress and
+          done.
+        </ViewEmpty>
+      </ViewFrame>
     );
   }
-
-  // Search filters by what you asked, what came back, and where.
-  const needle = query.trim().toLowerCase();
-  const shown = needle
-    ? tasks.filter((task) =>
-        [task.prompt, task.outcome ?? "", task.url]
-          .join("\n")
-          .toLowerCase()
-          .includes(needle),
-      )
-    : tasks;
 
   const running = shown.filter((task) => task.status === "running");
   const settled = shown.filter((task) => task.status !== "running");
@@ -138,16 +119,10 @@ export function TasksView({
     // the task PRODUCED is a separate thing with its own button on the
     // right: a report chip opens the report, an extension chip jumps to
     // the Extensions view. One row, two destinations, no guessing.
-    const open = onOpenTask && (() => onOpenTask(task));
-    const openable = Boolean(open);
-    // The main area and the trailing controls are separate buttons, so
-    // the row itself is a plain container (buttons can't nest).
-    const Main = openable ? "button" : "div";
     const isRunning = task.status === "running";
     const highlight = isRunning || !task.seen;
     const retryable =
       onRetry && (task.status === "failed" || task.status === "stopped");
-    const host = hostLabel(task.url);
     // The one word of status the outcome line leads with — colored only
     // when it's bad news, so red stays meaningful.
     const statusWord =
@@ -178,52 +153,30 @@ export function TasksView({
             }
           : null;
     return (
-      <div
+      <ListRow
         key={task.id}
-        className={`webbutler:group webbutler:flex webbutler:w-full webbutler:items-start webbutler:gap-2 webbutler:px-3 webbutler:py-2 ${
-          openable
-            ? "webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-1)]"
-            : ""
-        }`}
-      >
-        <Main
-          {...(openable ? { type: "button" as const, onClick: open } : {})}
-          title={openable ? "View task" : undefined}
-          className={`webbutler:flex webbutler:min-w-0 webbutler:flex-1 webbutler:items-start webbutler:gap-2 webbutler:text-left ${
-            openable ? "webbutler:cursor-pointer" : ""
-          }`}
-        >
-          {/* Fixed-width status column, dot centered on the first line, so
-              every row's text starts on the same axis. */}
+        onOpen={onOpenTask && (() => onOpenTask(task))}
+        openTitle="View task"
+        leading={
+          // Fixed-width status column, dot centered on the first line, so
+          // every row's text starts on the same axis.
           <span className="webbutler:flex webbutler:h-4 webbutler:w-2 webbutler:shrink-0 webbutler:items-center webbutler:justify-center">
             <StatusDot task={task} />
           </span>
-          <div className="webbutler:min-w-0 webbutler:flex-1">
-            {/* The ask, always first: rows scan by what you asked for. */}
-            <p
-              className={`webbutler:truncate webbutler:text-[12px] webbutler:leading-4 ${
-                highlight
-                  ? "webbutler:font-medium webbutler:text-[var(--wc-ink)]"
-                  : "webbutler:text-[var(--wc-text-2)]"
-              }`}
-            >
-              {task.prompt}
-            </p>
-            {/* The outcome (or live activity) as its own quiet line. */}
-            {secondary || statusWord ? (
-              <p className="webbutler:truncate webbutler:pt-px webbutler:text-[11px] webbutler:text-[var(--wc-text-3)]">
-                {statusWord}
-                {statusWord && secondary ? " · " : ""}
-                {secondary}
-              </p>
-            ) : null}
-            {host ? (
-              <p className="webbutler:truncate webbutler:pt-px webbutler:text-[10px] webbutler:text-[var(--wc-text-4)]">
-                {host}
-              </p>
-            ) : null}
-          </div>
-        </Main>
+        }
+        title={task.prompt}
+        muted={!highlight}
+        secondary={
+          secondary || statusWord ? (
+            <>
+              {statusWord}
+              {statusWord && secondary ? " · " : ""}
+              {secondary}
+            </>
+          ) : null
+        }
+        meta={hostLabel(task.url) || null}
+      >
         {output ? (
           // Always visible — the deliverable is the row's point, not a
           // hover secret. A labeled pill so it reads as tappable; accent
@@ -244,72 +197,59 @@ export function TasksView({
           </button>
         ) : null}
         {retryable ? (
-          <button
-            type="button"
+          <RowIconButton
             title="Retry"
-            aria-label={`Retry: ${task.prompt}`}
+            ariaLabel={`Retry: ${task.prompt}`}
             onClick={() => onRetry(task)}
-            className="webbutler:flex webbutler:size-5 webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:justify-center webbutler:rounded-full webbutler:text-[var(--wc-text-4)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[var(--wc-ink)]"
           >
             <HiArrowPath size={11} aria-hidden />
-          </button>
+          </RowIconButton>
         ) : null}
         {onRemove ? (
-          // Hover-revealed, but the slot is always reserved so timestamps
-          // stay on one axis whether or not the pointer is on the row.
-          <button
-            type="button"
+          <RowIconButton
             title={
               task.status === "running" ? "Remove (keeps running)" : "Remove"
             }
-            aria-label={`Remove: ${task.prompt}`}
+            ariaLabel={`Remove: ${task.prompt}`}
             onClick={() => onRemove(task)}
-            className="webbutler:flex webbutler:size-5 webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:justify-center webbutler:rounded-full webbutler:text-[var(--wc-text-4)] webbutler:opacity-0 webbutler:transition-all webbutler:duration-100 webbutler:group-hover:opacity-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[var(--wc-ink)] webbutler:focus-visible:opacity-100"
+            hoverReveal
           >
             <HiOutlineTrash size={11} aria-hidden />
-          </button>
+          </RowIconButton>
         ) : null}
-        <span className="webbutler:shrink-0 webbutler:pt-[3px] webbutler:text-[10px] webbutler:tabular-nums webbutler:text-[var(--wc-text-4)]">
+        <RowTime>
           {task.status === "running"
             ? "now"
             : timeAgo(task.finishedAt ?? task.startedAt)}
-        </span>
-      </div>
+        </RowTime>
+      </ListRow>
     );
   };
 
   return (
-    <div className="webbutler:flex webbutler:h-full webbutler:flex-col">
-      {/* "Clear old" spares in-flight rows, so it only earns its place
-          once there's history to clear. */}
-      <ViewHeader
-        label={running.length > 0 ? `${running.length} running` : "Tasks"}
-      >
-        <HeaderSearch value={query} onChange={setQuery} />
-        {onClear && settled.length > 0 ? (
-          <button
-            type="button"
-            onClick={() => onClear("old")}
-            className="webbutler:cursor-pointer webbutler:rounded-full webbutler:px-1.5 webbutler:py-0.5 webbutler:text-[10px] webbutler:text-[var(--wc-text-3)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[var(--wc-ink)]"
-          >
-            Clear old
-          </button>
-        ) : null}
-        {onClear ? (
-          <button
-            type="button"
-            onClick={() => onClear("all")}
-            className="webbutler:cursor-pointer webbutler:rounded-full webbutler:px-1.5 webbutler:py-0.5 webbutler:text-[10px] webbutler:text-[var(--wc-text-3)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[var(--wc-ink)]"
-          >
-            Clear all
-          </button>
-        ) : null}
-      </ViewHeader>
-      <div className="webbutler:min-h-0 webbutler:flex-1 webbutler:overflow-y-auto webbutler:pb-1.5 webbutler:pt-0.5">
+    <ViewFrame
+      label={running.length > 0 ? `${running.length} running` : "Tasks"}
+      actions={
+        <>
+          <HeaderSearch value={query} onChange={setQuery} />
+          {/* "Clear old" spares in-flight rows, so it only earns its
+              place once there's history to clear. */}
+          {onClear && settled.length > 0 ? (
+            <HeaderAction onClick={() => onClear("old")}>
+              Clear old
+            </HeaderAction>
+          ) : null}
+          {onClear ? (
+            <HeaderAction onClick={() => onClear("all")}>
+              Clear all
+            </HeaderAction>
+          ) : null}
+        </>
+      }
+    >
+      <ViewBody>
         {shown.length === 0 ? (
-          <p className="webbutler:px-3 webbutler:py-4 webbutler:text-center webbutler:text-[11px] webbutler:text-[var(--wc-text-3)]">
-            Nothing matches "{query.trim()}".
-          </p>
+          <ListNote>Nothing matches "{query.trim()}".</ListNote>
         ) : null}
         {running.map(row)}
         {/* A quiet seam between what's moving and what's history. */}
@@ -325,7 +265,7 @@ export function TasksView({
           </div>
         ) : null}
         {settled.map(row)}
-      </div>
-    </div>
+      </ViewBody>
+    </ViewFrame>
   );
 }

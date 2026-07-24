@@ -200,3 +200,23 @@ export const Failed: Story = {
     />
   ),
 };
+
+/**
+ * The post-setup reauth gate when the sign-in fails: alongside "Try
+ * again" and "Not now", "Switch provider" bails out to the Providers
+ * view — this provider may just be the wrong one now.
+ */
+export const GateFailed: Story = {
+  render: () => (
+    <Frame>
+      <OnboardingCard
+        variant="gate"
+        codex={{ status: 'failed', error: 'Could not reach the sandbox.' }}
+        onConnect={() => {}}
+        onSkip={() => {}}
+        onSwitchProvider={() => {}}
+        onDone={() => {}}
+      />
+    </Frame>
+  ),
+};

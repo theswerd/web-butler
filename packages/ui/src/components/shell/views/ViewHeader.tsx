@@ -1,5 +1,20 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import type { IconType } from "react-icons";
 import { HiMagnifyingGlass, HiXMark } from "react-icons/hi2";
+
+/**
+ * The shared chrome of every menu page. All five views (Tasks, Artifacts,
+ * Extensions, Providers, Settings) are the same page at heart — a header
+ * bar, a scrolling body, an empty state — so that shape lives here once:
+ *
+ *   <ViewFrame label="Tasks" actions={<HeaderAction …/>}>
+ *     <ViewBody>…rows…</ViewBody>          // or, when there's nothing:
+ *     <ViewEmpty icon={HiOutlineClock}>…</ViewEmpty>
+ *   </ViewFrame>
+ *
+ * Row-level primitives (ListRow, RowTime, …) live in ListRow.tsx; the
+ * Providers/Settings keyboard model lives in useRovingRows.ts.
+ */
 
 /**
  * The standard top bar of every menu page: a quiet uppercase label on the
@@ -22,6 +37,126 @@ export function ViewHeader({
       {children}
     </div>
   );
+}
+
+/** The page itself: full-height column, header on top, content below. */
+export function ViewFrame({
+  label,
+  actions,
+  children,
+}: {
+  label: string;
+  /** The header's right side — HeaderActions, search, filter tabs. */
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="webbutler:flex webbutler:h-full webbutler:flex-col">
+      <ViewHeader label={label}>{actions}</ViewHeader>
+      {children}
+    </div>
+  );
+}
+
+/** The page's scrolling list area, under the (pinned) header. */
+export function ViewBody({ children }: { children: ReactNode }) {
+  return (
+    <div className="webbutler:min-h-0 webbutler:flex-1 webbutler:overflow-y-auto webbutler:pb-1.5 webbutler:pt-0.5">
+      {children}
+    </div>
+  );
+}
+
+/** The nothing-here state: a quiet icon and one sentence, centered in
+    whatever height the frame has left. */
+export function ViewEmpty({
+  icon: Icon,
+  children,
+}: {
+  icon: IconType;
+  children: ReactNode;
+}) {
+  return (
+    <div className="webbutler:flex webbutler:flex-1 webbutler:flex-col webbutler:items-center webbutler:justify-center webbutler:gap-1.5 webbutler:px-4 webbutler:text-center">
+      <Icon
+        size={16}
+        aria-hidden
+        className="webbutler:text-[var(--wc-text-4)]"
+      />
+      <p className="webbutler:text-[11px] webbutler:text-[var(--wc-text-3)]">
+        {children}
+      </p>
+    </div>
+  );
+}
+
+/** A header-bar text action ("Clear all", "Clear old"): quiet until
+    hovered, sized to sit beside the search field. */
+export function HeaderAction({
+  onClick,
+  children,
+}: {
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="webbutler:cursor-pointer webbutler:rounded-full webbutler:px-1.5 webbutler:py-0.5 webbutler:text-[10px] webbutler:text-[var(--wc-text-3)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-2)] webbutler:hover:text-[var(--wc-ink)]"
+    >
+      {children}
+    </button>
+  );
+}
+
+/** An in-list aside — "Nothing matches", "Nothing applies to this page" —
+    for lists that exist but have nothing to show right now. */
+export function ListNote({ children }: { children: ReactNode }) {
+  return (
+    <p className="webbutler:px-3 webbutler:py-4 webbutler:text-center webbutler:text-[11px] webbutler:text-[var(--wc-text-3)]">
+      {children}
+    </p>
+  );
+}
+
+/** The small bordered button of the Providers/Settings rows ("Connect",
+    "Add", "Reset"). tabIndex −1: those pages rove focus by ROW, and the
+    row's key handling activates the control. */
+export function MiniButton({
+  onClick,
+  title,
+  children,
+}: {
+  onClick: () => void;
+  title?: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      tabIndex={-1}
+      title={title}
+      onClick={onClick}
+      className="webbutler:shrink-0 webbutler:cursor-pointer webbutler:rounded-md webbutler:border webbutler:border-[var(--wc-border)] webbutler:px-2 webbutler:py-0.5 webbutler:text-[10px] webbutler:text-[var(--wc-ink)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:bg-[var(--wc-hover-1)]"
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * The search behavior behind HeaderSearch, shared by every searchable
+ * list: query state plus the case-insensitive filter over whatever text
+ * the caller deems searchable per item.
+ */
+export function useListSearch<T>(items: T[], haystack: (item: T) => string) {
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const shown = needle
+    ? items.filter((item) => haystack(item).toLowerCase().includes(needle))
+    : items;
+  return { query, setQuery, needle, shown };
 }
 
 /**

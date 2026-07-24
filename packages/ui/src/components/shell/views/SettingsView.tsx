@@ -13,7 +13,8 @@ import {
   type ShellPosition,
   type ThemePref,
 } from "../../../lib/settings";
-import { ViewHeader } from "./ViewHeader";
+import { useRovingRows } from "./useRovingRows";
+import { MiniButton, ViewBody, ViewFrame } from "./ViewHeader";
 
 const POSITIONS: Array<{ id: ShellPosition; title: string }> = [
   { id: "top-left", title: "Top left" },
@@ -31,7 +32,7 @@ const THEMES: Array<{ id: ThemePref; label: string }> = [
 ];
 
 /** Row order for ArrowUp/ArrowDown roving. */
-const ROW_COUNT = 7;
+const ROW_COUNT = 8;
 
 type SettingsViewProps = {
   settings: Settings;
@@ -40,6 +41,12 @@ type SettingsViewProps = {
   onExitLeft?: () => void;
   /** True while keyboard/pointer focus is inside the settings pane. */
   focused?: boolean;
+  /**
+   * "Erase everything": wipe all local state — the signed-in identity,
+   * settings, tasks, site extensions — and return to the first-run sign-in.
+   * Confirmed with a second click before it fires.
+   */
+  onResetAll?: () => void;
 };
 
 /**
@@ -55,19 +62,21 @@ export function SettingsView({
   onChange,
   onExitLeft,
   focused = false,
+  onResetAll,
 }: SettingsViewProps) {
-  const rowRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const { rowRefs, focusRow, rowKeyDown } = useRovingRows(
+    onResetAll ? ROW_COUNT : ROW_COUNT - 1,
+    onExitLeft,
+  );
   const siteInputRef = useRef<HTMLInputElement | null>(null);
   const [siteInput, setSiteInput] = useState("");
   const [recordingRow, setRecordingRow] = useState<number | null>(null);
+  // First click arms the erase, second fires it; arming decays on its own.
+  const [eraseArmed, setEraseArmed] = useState(false);
+  const eraseTimer = useRef<number | null>(null);
   // Nothing is selected while focus remains in the sidebar. ArrowRight into
   // the pane (or a direct pointer interaction) establishes the active row.
   const [activeRow, setActiveRow] = useState<number | null>(null);
-
-  const focusRow = (index: number) => {
-    const next = ((index % ROW_COUNT) + ROW_COUNT) % ROW_COUNT;
-    rowRefs.current[next]?.focus();
-  };
 
   const cyclePosition = () => {
     const index = POSITIONS.findIndex((p) => p.id === settings.position);
@@ -121,42 +130,6 @@ export function SettingsView({
     stopRecording();
   };
 
-  const rowKeyDown =
-    (index: number, activate: () => void, spaceOnly = false) =>
-    (event: KeyboardEvent<HTMLDivElement>) => {
-      if (event.defaultPrevented) return;
-      // Text inputs own their keys (caret movement, typing).
-      const target = event.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
-
-      switch (event.key) {
-        case "ArrowDown":
-          event.preventDefault();
-          focusRow(index + 1);
-          break;
-        case "ArrowUp":
-          event.preventDefault();
-          focusRow(index - 1);
-          break;
-        case "ArrowLeft":
-          event.preventDefault();
-          onExitLeft?.();
-          break;
-        case "ArrowRight":
-        case "Enter":
-          if (spaceOnly) break;
-          event.preventDefault();
-          activate();
-          break;
-        case " ":
-          event.preventDefault();
-          activate();
-          break;
-        default:
-          break;
-      }
-    };
-
   const addSite = () => {
     const pattern = normalizeSitePattern(siteInput);
     if (!pattern || settings.excludedSites.includes(pattern)) return;
@@ -166,6 +139,17 @@ export function SettingsView({
 
   const resetDefaults = () => {
     onChange({ ...DEFAULT_SETTINGS });
+  };
+
+  const requestErase = () => {
+    if (eraseArmed) {
+      if (eraseTimer.current != null) window.clearTimeout(eraseTimer.current);
+      onResetAll?.();
+      return;
+    }
+    setEraseArmed(true);
+    // A destructive click shouldn't stay armed forever if abandoned.
+    eraseTimer.current = window.setTimeout(() => setEraseArmed(false), 4000);
   };
 
   const row = (
@@ -180,9 +164,7 @@ export function SettingsView({
     },
   ) => (
     <div
-      ref={(el) => {
-        rowRefs.current[index] = el;
-      }}
+      ref={rowRefs(index)}
       tabIndex={-1}
       data-wc-row
       onFocusCapture={() => setActiveRow(index)}
@@ -190,7 +172,7 @@ export function SettingsView({
       onKeyDown={
         recordingRow === index && options?.recording
           ? (event) => recordCombo(event, options.recording!)
-          : rowKeyDown(index, activate, options?.spaceOnly)
+          : rowKeyDown(index, activate, { spaceOnly: options?.spaceOnly })
       }
       // CapsLock never produces a keydown when being turned OFF (macOS) — the
       // keyup is the only signal, so recording listens for it too.
@@ -253,7 +235,7 @@ export function SettingsView({
         type="button"
         tabIndex={-1}
         onClick={() => {
-          rowRefs.current[index]?.focus();
+          focusRow(index);
           startRecording(index, key);
         }}
         className={`webbutler:min-w-12 webbutler:cursor-pointer webbutler:rounded-md webbutler:border webbutler:px-1.5 webbutler:py-0.5 webbutler:text-center webbutler:text-[10px] webbutler:transition-colors webbutler:duration-100 ${
@@ -268,9 +250,8 @@ export function SettingsView({
   };
 
   return (
-    <div className="webbutler:flex webbutler:h-full webbutler:flex-col">
-      <ViewHeader label="Settings" />
-      <div className="webbutler:min-h-0 webbutler:flex-1 webbutler:overflow-y-auto webbutler:pb-1.5 webbutler:pt-0.5">
+    <ViewFrame label="Settings">
+      <ViewBody>
         {row(
           0,
           "Location",
@@ -406,19 +387,12 @@ export function SettingsView({
                   ) {
                     // Leave the input, back onto the row for roving.
                     event.preventDefault();
-                    rowRefs.current[5]?.focus();
+                    focusRow(5);
                   }
                 }}
                 className="webbutler:min-w-0 webbutler:flex-1 webbutler:rounded-md webbutler:border webbutler:border-[var(--wc-border)] webbutler:bg-transparent webbutler:px-1.5 webbutler:py-0.5 webbutler:text-[10px] webbutler:text-[var(--wc-ink)] webbutler:outline-none webbutler:placeholder:text-[var(--wc-text-4)] webbutler:focus:border-[var(--wc-border-strong)]"
               />
-              <button
-                type="button"
-                tabIndex={-1}
-                onClick={addSite}
-                className="webbutler:cursor-pointer webbutler:rounded-md webbutler:border webbutler:border-[var(--wc-border)] webbutler:px-1.5 webbutler:py-0.5 webbutler:text-[10px] webbutler:text-[var(--wc-ink)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:bg-[var(--wc-hover-1)]"
-              >
-                Add
-              </button>
+              <MiniButton onClick={addSite}>Add</MiniButton>
             </div>
 
             {settings.excludedSites.length > 0 ? (
@@ -456,16 +430,29 @@ export function SettingsView({
           6,
           "Reset to defaults",
           resetDefaults,
-          <button
-            type="button"
-            tabIndex={-1}
-            onClick={resetDefaults}
-            className="webbutler:cursor-pointer webbutler:rounded-md webbutler:border webbutler:border-[var(--wc-border)] webbutler:px-1.5 webbutler:py-0.5 webbutler:text-[10px] webbutler:text-[var(--wc-ink)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:bg-[var(--wc-hover-1)]"
-          >
-            Reset
-          </button>,
+          <MiniButton onClick={resetDefaults}>Reset</MiniButton>,
         )}
-      </div>
-    </div>
+
+        {onResetAll
+          ? row(
+              7,
+              eraseArmed ? "Signs you out. No undo." : "Erase everything",
+              requestErase,
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={requestErase}
+                className={`webbutler:shrink-0 webbutler:cursor-pointer webbutler:rounded-md webbutler:border webbutler:px-2 webbutler:py-0.5 webbutler:text-[10px] webbutler:transition-colors webbutler:duration-100 ${
+                  eraseArmed
+                    ? "webbutler:border-[#e5484d]/60 webbutler:bg-[#e5484d]/10 webbutler:font-medium webbutler:text-[#e5484d]"
+                    : "webbutler:border-[var(--wc-border)] webbutler:text-[var(--wc-ink)] webbutler:hover:border-[#e5484d]/50 webbutler:hover:text-[#e5484d]"
+                }`}
+              >
+                {eraseArmed ? "Yes, erase" : "Erase…"}
+              </button>,
+            )
+          : null}
+      </ViewBody>
+    </ViewFrame>
   );
 }

@@ -48,6 +48,10 @@ export default defineConfig({
       'debugger',
       // OS notifications for tasks that finish while no shell is showing.
       'notifications',
+      // Re-inject the shell into open tabs after the extension reloads
+      // (dev-loop rebuilds, store updates) — manifest content scripts only
+      // reach documents loaded after the reload.
+      'scripting',
     ],
     host_permissions: ['<all_urls>'],
     commands: {

@@ -41,6 +41,13 @@ function App() {
     };
   }, []);
 
+  // highlight: links clicked here point at markers living in the active
+  // tab's shell — the background relays the focus request over there.
+  const focusHighlight = (id: string) =>
+    void browser.runtime
+      .sendMessage({ type: MESSAGE.HIGHLIGHT_FOCUS, highlightId: id })
+      .catch(() => {});
+
   return (
     <div id="web-butler-root">
       <div className={dark ? 'wc-dark webbutler:h-full' : 'webbutler:h-full'}>
@@ -75,6 +82,7 @@ function App() {
                 .sendMessage({ type: MESSAGE.SHELL_PREFILL, text })
                 .catch(() => {})
             }
+            onHighlightLink={focusHighlight}
           />
         ) : state?.kind === 'report' && state.report ? (
           <ReportView
@@ -82,6 +90,7 @@ function App() {
             description={state.report.description}
             meta={state.report.meta}
             text={state.report.text}
+            onHighlightLink={focusHighlight}
           />
         ) : (
           <div className="webbutler:flex webbutler:h-full webbutler:items-center webbutler:justify-center webbutler:px-6 webbutler:text-center webbutler:text-[12px] webbutler:text-[var(--wc-text-3)]">

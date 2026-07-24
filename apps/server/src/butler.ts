@@ -272,9 +272,51 @@ const suggestionsSchema = z.unknown().transform((value): string[] => {
     .slice(0, 3);
 });
 
+/** A page section the agent flagged alongside its outcome: a CSS selector
+    plus a short markdown note (what this is, why it matters). Rendered as
+    marker overlays; `highlight:` links in the outcome markdown jump to
+    them. */
+export type PageHighlight = {
+  id: string;
+  selector: string;
+  note?: string;
+};
+
+/** Like suggestions: junk entries drop one by one instead of failing the
+    file. Missing ids are filled in (h1, h2, …) — the markdown links need
+    something to point at — and duplicates are de-duped by suffix. */
+const highlightsSchema = z.unknown().transform((value): PageHighlight[] => {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const highlights: PageHighlight[] = [];
+  for (const entry of value) {
+    if (highlights.length >= 8) break;
+    if (entry == null || typeof entry !== 'object') continue;
+    const record = entry as Record<string, unknown>;
+    const selector =
+      typeof record.selector === 'string'
+        ? record.selector.trim().slice(0, 400)
+        : '';
+    if (!selector) continue;
+    let id =
+      typeof record.id === 'string' && record.id.trim()
+        ? record.id.trim().slice(0, 60)
+        : `h${highlights.length + 1}`;
+    while (seen.has(id)) id = `${id}-${highlights.length + 1}`;
+    seen.add(id);
+    const note =
+      typeof record.note === 'string'
+        ? record.note.trim().slice(0, 500)
+        : undefined;
+    highlights.push({ id, selector, note: note || undefined });
+  }
+  return highlights;
+});
+
 const outcomesFileSchema = z.object({
   outcomes: z.array(outcomeSchema).min(1),
   suggestions: suggestionsSchema.optional(),
+  highlights: highlightsSchema.optional(),
 });
 
 /**
@@ -358,6 +400,16 @@ When the user asks to combine, consolidate, or clean up their extensions (or one
 ### Suggested next prompts
 
 "suggestions" is optional: up to three follow-up prompts the user might plausibly send next, shown as one-tap chips when your task finishes. Write each in the user's voice, under ~60 characters, concrete to THIS task's result ("Draft a reply to the top comment", "Do the same for the pricing page") — never generic filler like "anything else?". Omit the field when no natural next step exists.
+
+### Page highlights
+
+"highlights" is optional: up to eight sections of the CURRENT page to point the user at, next to "outcomes":
+
+{ "outcomes": [...], "highlights": [ { "id": "pricing-row", "selector": "#plans tr:nth-child(3)", "note": "..." } ] }
+
+"selector" is a CSS selector that must resolve on the page this message came from — build it from the HTML snapshot, preferring ids and stable class names over long positional chains. "note" is one or two short sentences of markdown: what this section is and why you flagged it. Each highlight renders as a quiet marker over that part of the page; nothing scrolls or flashes on its own.
+
+To send the user to one, link it from your response or artifact markdown: [the third pricing row](highlight:pricing-row). Clicking that link scrolls the page to the section and opens its note. Always pair highlights with links — a highlight nothing points to is just noise — and use them only when the answer is about specific places in the page ("this button opens the modal", "these two rows disagree"), never for general answers. Highlights only work on the page the message came from; don't emit them for other tabs or for work that isn't about this page.
 
 ## Acting in the page (browser control)
 
@@ -601,6 +653,8 @@ export type OutcomeRead = {
   outcomes: Outcome[];
   /** Follow-up prompts the agent offered next to its outcomes. */
   suggestions?: string[];
+  /** Page sections the agent flagged — rendered as markers on the page. */
+  highlights?: PageHighlight[];
   /** Why the written file was rejected; unset when the file was simply
       missing (the fallback response is then business as usual). */
   invalid?: string;
@@ -643,6 +697,9 @@ export async function readOutcomes(
             outcomes: parsed.data.outcomes,
             suggestions: parsed.data.suggestions?.length
               ? parsed.data.suggestions
+              : undefined,
+            highlights: parsed.data.highlights?.length
+              ? parsed.data.highlights
               : undefined,
           };
         }

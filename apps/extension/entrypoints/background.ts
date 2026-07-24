@@ -18,6 +18,7 @@ import {
   type Run,
   type RunResult,
   type RunStartResult,
+  type ShellMode,
   type ShellPersist,
   type SiteExtension,
   type Task,
@@ -57,11 +58,41 @@ import {
 } from '../lib/user-scripts';
 import { detachTab, performAction } from '../lib/browser-control';
 
-/** Per-tab shell UI state for the current browser session. */
+/** Per-tab shell UI state for the current browser session. The MODE is not
+    in here — it's session-wide (below); this holds what genuinely belongs
+    to one tab: the draft (often about this page), menu open, active view. */
 const shellByTab = storage.defineItem<Record<string, ShellPersist>>(
   'session:shellByTab',
   { fallback: {} },
 );
+
+/**
+ * The shell's open/collapsed mode, shared across every tab: closing the
+ * butler somewhere closes it everywhere (and opening reopens it
+ * everywhere). Per-tab mode meant a shell dismissed on one page greeted
+ * you again on the next tab — the single most annoying thing it did.
+ * SHELL_GET merges this over the per-tab record; SHELL_PATCH writes it
+ * here and broadcasts the flip to all live tabs.
+ */
+const shellModeItem = storage.defineItem<ShellMode>('session:shellMode', {
+  fallback: 'open',
+});
+
+/** Tell every other tab's shell the mode flipped (the origin tab already
+    updated optimistically — skipping it avoids fighting its local state). */
+async function broadcastShellMode(mode: ShellMode, exceptTabId?: number) {
+  const tabs = await browser.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+  await Promise.allSettled(
+    tabs
+      .filter((tab) => tab.id != null && tab.id !== exceptTabId)
+      .map((tab) =>
+        browser.tabs.sendMessage(tab.id!, {
+          type: MESSAGE.SHELL_MODE_CHANGED,
+          mode,
+        }),
+      ),
+  );
+}
 
 /**
  * The live run per tab. Tab-scoped runs park their result here so a reload
@@ -335,10 +366,8 @@ async function maybeNotifyFinished(task: Task) {
     });
     const hasShell = /^https?:/.test(active?.url ?? '');
     if (hasShell && active?.id != null) {
-      const shell = (await shellByTab.getValue())[tabKey(active.id)];
-      // Default shell mode is open — only an explicit collapse silences
-      // the in-page surfaces enough to need the OS to speak up.
-      if ((shell?.mode ?? 'open') === 'open') return;
+      // Mode is session-wide now — one read answers for every tab.
+      if ((await shellModeItem.getValue()) === 'open') return;
     }
     await browser.notifications.create(`wb-task:${task.id}`, {
       type: 'basic',
@@ -1200,6 +1229,9 @@ async function executeTabRun(run: Run, provider: DeviceAuthProvider, page: PageC
         ? { tier: 'answer', text }
         : { tier: 'status', text: 'Done.' };
     }
+    // Marker overlays for the origin tab. Tab runs only — a highlight is
+    // meaningless anywhere but the page the prompt came from.
+    if (turn.highlights?.length) result.highlights = turn.highlights;
   }
 
   // Displaced = a newer prompt owns this tab's answer slot now. The task
@@ -1429,6 +1461,56 @@ async function watchForRebuilds() {
   }, 1500);
 }
 
+/**
+ * Give already-open tabs a live shell after the extension reloads (dev-loop
+ * rebuilds, store updates). Chrome only auto-injects manifest content
+ * scripts into documents that load AFTER the reload; scripts in open tabs
+ * are orphaned — their UI keeps rendering from stale React state while
+ * every runtime.sendMessage dies with "Extension context invalidated", so
+ * anything that needs the background (opening the side panel, stopping a
+ * task, sending a prompt) silently does nothing. Re-executing the content
+ * script replaces the zombie: it tears down the old host before mounting.
+ */
+async function remountContentScripts() {
+  const tabs = await browser.tabs.query({ url: ['http://*/*', 'https://*/*'] });
+  await Promise.allSettled(
+    tabs.map((tab) =>
+      tab.id == null
+        ? Promise.resolve()
+        : browser.scripting.executeScript({
+            target: { tabId: tab.id },
+                      files: ['/content-scripts/content.js'],
+          }),
+    ),
+  );
+}
+
+/**
+ * Settings' "Erase everything": drop every trace of this install — the
+ * anonymous identity (auth token + sandbox id), settings, task/report
+ * caches, and injected site scripts — then reload the extension. The fresh
+ * service worker signs in as a brand-new anonymous user, onInstalled
+ * remounts the content scripts, and every open tab comes back showing the
+ * first-run sign-in.
+ *
+ * Local-only by design: the old server-side user and its rows just go
+ * unreferenced (nothing can reach them without the token we're deleting).
+ */
+async function resetEverything() {
+  // Site scripts first — they're registered from the cache being wiped.
+  try {
+    await browser.userScripts.unregister();
+  } catch {
+    /* user-scripts toggle off — nothing was registered */
+  }
+  await browser.storage.local.clear();
+  await browser.storage.session.clear();
+  // Reload after the response has a chance to reach the caller; the shells
+  // die with the reload and are remounted blank.
+  setTimeout(() => browser.runtime.reload(), 150);
+  return true;
+}
+
 export default defineBackground(() => {
   void watchForRebuilds();
 
@@ -1436,7 +1518,12 @@ export default defineBackground(() => {
   // worker start but no-ops once the sandbox id is stored; failures retry
   // on the next start.
   void ensureInitialized();
-  browser.runtime.onInstalled.addListener(() => void ensureInitialized());
+  browser.runtime.onInstalled.addListener(() => {
+    void ensureInitialized();
+    // Fires on install AND on every reload/update — exactly the moments
+    // open tabs are left with orphaned content scripts.
+    void remountContentScripts();
+  });
 
   // Warm the active provider's auth status so the first message doesn't
   // pay the server round-trip inside RUN_START (connected is then served
@@ -1537,6 +1624,11 @@ export default defineBackground(() => {
         return panelState();
       }
 
+      // Settings' "Erase everything": back to the out-of-box state.
+      if (message?.type === MESSAGE.RESET_ALL) {
+        return resetEverything();
+      }
+
       // "Open report" inside a task view: the panel is already open, so
       // this is only a focus change — no user-gesture requirement.
       if (message?.type === MESSAGE.PANEL_FOCUS_REPORT) {
@@ -1553,7 +1645,10 @@ export default defineBackground(() => {
       // just drops it.
       if (
         message?.type === MESSAGE.SHELL_REVEAL_EXTENSION ||
-        message?.type === MESSAGE.SHELL_PREFILL
+        message?.type === MESSAGE.SHELL_PREFILL ||
+        // A highlight: link clicked in the side panel — the marker lives in
+        // the active tab's shell, so relay the focus request there.
+        message?.type === MESSAGE.HIGHLIGHT_FOCUS
       ) {
         return (async () => {
           const [active] = await browser.tabs.query({
@@ -1618,8 +1713,12 @@ export default defineBackground(() => {
       }
 
       if (message?.type === MESSAGE.SHELL_GET) {
-        return shellByTab.getValue().then((all) => {
-          const merged = { ...DEFAULT_SHELL_PERSIST, ...all[tabKey(tabId)] };
+        return Promise.all([
+          shellByTab.getValue(),
+          shellModeItem.getValue(),
+        ]).then(([all, mode]) => {
+          // Mode comes from the session-wide item, never the tab record.
+          const merged = { ...DEFAULT_SHELL_PERSIST, ...all[tabKey(tabId)], mode };
           // Views get renamed between builds ('notifications' → 'tasks');
           // session storage outlives the rename, so heal stale ids.
           const known: ShellPersist['activeView'][] = [
@@ -1645,6 +1744,15 @@ export default defineBackground(() => {
             ...message.patch,
           };
           await shellByTab.setValue({ ...all, [key]: next });
+          // Mode is session-wide: persist the flip and mirror it into
+          // every other tab's live shell.
+          if (message.patch.mode !== undefined) {
+            const current = await shellModeItem.getValue();
+            if (message.patch.mode !== current) {
+              await shellModeItem.setValue(message.patch.mode);
+              void broadcastShellMode(message.patch.mode, tabId);
+            }
+          }
           return next;
         });
       }
@@ -1886,12 +1994,25 @@ export default defineBackground(() => {
         const open = browser.sidePanel
           ? browser.sidePanel.open({ tabId })
           : Promise.reject(new Error('sidePanel API unavailable'));
-        void open.catch((error) => {
-          console.warn('[web-butler] sidePanel.open failed:', error);
-          return browser.tabs
-            .create({ url: browser.runtime.getURL('/sidepanel.html') })
-            .catch(() => {});
-        });
+        void open
+          .then(async () => {
+            // Some Chromium forks resolve the call without showing any
+            // panel UI. Give the panel document a beat to spin up, then
+            // verify it exists — if not, take the tab fallback below.
+            await new Promise((resolve) => setTimeout(resolve, 600));
+            const contexts = await browser.runtime.getContexts({
+              contextTypes: ['SIDE_PANEL'],
+            });
+            if (contexts.length === 0) {
+              throw new Error('open() resolved but no panel appeared');
+            }
+          })
+          .catch((error) => {
+            console.warn('[web-butler] sidePanel.open failed:', error);
+            return browser.tabs
+              .create({ url: browser.runtime.getURL('/sidepanel.html') })
+              .catch(() => {});
+          });
         // Targeting a specific artifact or a live task: focus it and
         // refresh an already-open panel.
         if (message.taskId) {

@@ -8,7 +8,7 @@ import {
 import { matchesAnyPattern } from "../../../lib/match-patterns";
 import { SPRING_UI } from "../../../lib/motion";
 import type { ExtensionsState, SiteExtension } from "../../../lib/shell";
-import { ViewHeader } from "./ViewHeader";
+import { ListNote, ViewBody, ViewEmpty, ViewFrame } from "./ViewHeader";
 
 type ExtensionsViewProps = {
   state: ExtensionsState;
@@ -197,48 +197,40 @@ export function ExtensionsView({
 
   if (extensions.length === 0) {
     return (
-      <div className="webbutler:flex webbutler:h-full webbutler:flex-col">
-        <ViewHeader label="Extensions" />
+      <ViewFrame label="Extensions">
         {!userScriptsAvailable ? (
           <BlockedBanner onOpenSettings={onOpenSettings} />
         ) : null}
-        <div className="webbutler:flex webbutler:flex-1 webbutler:flex-col webbutler:items-center webbutler:justify-center webbutler:gap-1.5 webbutler:px-4 webbutler:text-center">
-          <HiOutlinePuzzlePiece
-            size={16}
-            aria-hidden
-            className="webbutler:text-[var(--wc-text-4)]"
-          />
-          <p className="webbutler:text-[11px] webbutler:text-[var(--wc-text-3)]">
-            No site extensions yet. Ask for a persistent change to any page
-            ("always hide the sidebar here") and it will live here.
-          </p>
-        </div>
-      </div>
+        <ViewEmpty icon={HiOutlinePuzzlePiece}>
+          No site extensions yet. Ask for a persistent change to any page
+          ("always hide the sidebar here") and it will live here.
+        </ViewEmpty>
+      </ViewFrame>
     );
   }
 
   const visible = filter === "page" ? onThisPage : extensions;
 
   return (
-    <div className="webbutler:flex webbutler:h-full webbutler:flex-col">
-      {/* The scope filter is this page's header action. */}
-      <ViewHeader label="Extensions">
-        {pageUrl ? (
+    <ViewFrame
+      label="Extensions"
+      // The scope filter is this page's header action.
+      actions={
+        pageUrl ? (
           <FilterTabs
             filter={filter}
             counts={{ page: onThisPage.length, all: extensions.length }}
             onChange={setFilter}
           />
-        ) : null}
-      </ViewHeader>
-      <div className="webbutler:min-h-0 webbutler:flex-1 webbutler:overflow-y-auto webbutler:pb-1.5 webbutler:pt-0.5">
+        ) : null
+      }
+    >
+      <ViewBody>
         {!userScriptsAvailable ? (
           <BlockedBanner onOpenSettings={onOpenSettings} />
         ) : null}
         {visible.length === 0 ? (
-          <p className="webbutler:px-4 webbutler:py-3 webbutler:text-center webbutler:text-[11px] webbutler:text-[var(--wc-text-3)]">
-            Nothing applies to this page.
-          </p>
+          <ListNote>Nothing applies to this page.</ListNote>
         ) : null}
         {visible.map((ext: SiteExtension) => {
           const broken = ext.enabled && health?.[ext.id]?.status === "broken";
@@ -310,7 +302,7 @@ export function ExtensionsView({
             </div>
           );
         })}
-      </div>
-    </div>
+      </ViewBody>
+    </ViewFrame>
   );
 }

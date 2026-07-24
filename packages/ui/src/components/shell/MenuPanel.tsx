@@ -134,6 +134,8 @@ type MenuPanelProps = {
   artifacts?: MenuArtifactsProps;
   extensions?: MenuExtensionsProps;
   providers?: MenuProvidersProps;
+  /** Settings' "Erase everything" — wipes all local state, back to sign-in. */
+  onResetAll?: () => void;
   /** ArrowLeft on a sidebar row — focus returns to the menu (bowtie) button. */
   onExitLeft?: () => void;
 };
@@ -167,6 +169,7 @@ export function MenuPanel({
   artifacts = {},
   extensions = {},
   providers = {},
+  onResetAll,
   onExitLeft,
 }: MenuPanelProps) {
   const extensionsState = extensions.state ?? {
@@ -402,6 +405,7 @@ export function MenuPanel({
             onChange={onSettingsChange}
             onExitLeft={focusSidebar}
             focused={focusRegion === 'pane'}
+            onResetAll={onResetAll}
           />
         ) : active === 'providers' ? (
           <ProvidersView

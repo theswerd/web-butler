@@ -11,6 +11,7 @@ import { browser } from 'wxt/browser';
 import {
   ACCENT_OPTIONS,
   AnswerCard,
+  AgentHighlight,
   COMMAND_COMBO,
   CollapsedPill,
   ContextChips,
@@ -33,11 +34,13 @@ import {
   hotkeyRecording,
   isExcluded,
   popoverVariants,
+  resolveHighlight,
   resolvePickedElement,
   shellVariants,
   SPRING_SHEET,
   SPRING_UI,
   useIsDark,
+  type PageHighlight,
   type PickedElement,
   type ProviderAuth,
   type ShellMode,
@@ -146,6 +149,13 @@ export function App() {
   // it (same agent session) instead of a fresh task — the task-shaped
   // sibling of referencing a page element.
   const [replyTaskId, setReplyTaskId] = useState<string | null>(null);
+  // Sections the agent flagged with its latest answer — marker overlays,
+  // navigated via highlight: links. They outlive the answer card (a report
+  // in the side panel may still link to them) and clear on the next send.
+  const [agentHighlights, setAgentHighlights] = useState<PageHighlight[]>([]);
+  const [focusedHighlightId, setFocusedHighlightId] = useState<string | null>(
+    null,
+  );
   // Extension to scroll-to-and-flash when the menu's Extensions view next
   // renders — set by the side panel's "View extension" button (relayed by
   // the background), cleared when the menu closes.
@@ -252,6 +262,21 @@ export function App() {
   useEffect(() => {
     if (finished && run && finished.id === run.id) clearRun();
   }, [finished, run, clearRun]);
+
+  // An armed reference must always be visible somewhere — as the answer
+  // card's outline or a strip pill's. If both surfaces are gone (card
+  // dismissed, pill dismissed/absent), disarm rather than silently turning
+  // the next message into a follow-up. Mirrors the strip's filter (running
+  // or unseen), not its display cap — close enough, and the cap rarely hits.
+  useEffect(() => {
+    if (!replyTaskId) return;
+    const cardShowsIt = run?.result != null && run.id === replyTaskId;
+    const pillShowsIt = tasks.some(
+      (task) =>
+        task.id === replyTaskId && (task.status === 'running' || !task.seen),
+    );
+    if (!cardShowsIt && !pillShowsIt) setReplyTaskId(null);
+  }, [replyTaskId, run, tasks]);
 
   // First-run onboarding: hand-holds connecting an AI before the prompt
   // takes over. There's no skipping: it stays until a provider connects.
@@ -427,6 +452,10 @@ export function App() {
         })),
       );
       setSending(true);
+      // The last answer's markers belong to the question that produced
+      // them — a new message starts a clean page.
+      setAgentHighlights([]);
+      setFocusedHighlightId(null);
       void startRun(text, page, replyTaskId ?? undefined)
         .then((result) => {
           if (!result || !('authRequired' in result)) return;
@@ -445,6 +474,34 @@ export function App() {
       setReplyTaskId(null);
     },
     [picked, missingIds, replyTaskId, startRun, patchShell, connectCodex],
+  );
+
+  // The agent's page highlights arrive with the run's result. They're held
+  // in their own state (not derived from `run`) so dismissing the answer
+  // card doesn't strip the markers a side-panel report still links to.
+  useEffect(() => {
+    const next = run?.result?.highlights;
+    if (next?.length) {
+      setAgentHighlights(next);
+      setFocusedHighlightId(null);
+    }
+  }, [run]);
+
+  // A highlight: link was clicked (answer card here, or a report in the
+  // side panel relayed through the background): scroll the section into
+  // view and open its note. This is the ONLY way the page ever scrolls —
+  // markers arriving is never a scroll.
+  const jumpToHighlight = useCallback(
+    (id: string) => {
+      const target = agentHighlights.find((highlight) => highlight.id === id);
+      if (!target) return;
+      setFocusedHighlightId(id);
+      resolveHighlight(target)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    },
+    [agentHighlights],
   );
 
   // Hand a broken extension back to the agent. The prompt carries the
@@ -492,6 +549,10 @@ export function App() {
         patchShell({ mode: 'open', menuOpen: false, draft: message.text });
         setFocusOnOpen(true);
       }
+      // A highlight: link clicked in the side panel — the marker is here.
+      if (message?.type === MESSAGE.HIGHLIGHT_FOCUS) {
+        jumpToHighlight(message.highlightId);
+      }
       if (message?.type === MESSAGE.BROWSER_CURSOR) {
         const cursor = message.cursor;
         if (cursor.kind === 'hide') {
@@ -519,7 +580,7 @@ export function App() {
 
     browser.runtime.onMessage.addListener(onMessage);
     return () => browser.runtime.onMessage.removeListener(onMessage);
-  }, [toggle, open, collapse, patchShell]);
+  }, [toggle, open, collapse, patchShell, jumpToHighlight]);
 
   // A reveal is a one-shot arrival effect: once the menu closes, a later
   // plain visit to Extensions must not replay the scroll-and-flash.
@@ -685,6 +746,16 @@ export function App() {
               startRun(selected.join(', '), capturePageContext([]))
             }
             onOpenReport={openSidePanel}
+            // A highlight: link in the answer — jump to that marker.
+            onHighlightLink={jumpToHighlight}
+            // The answer is a task's output, so it's referenceable exactly
+            // like the task's pill: clicking outlines the card and the next
+            // message continues that task. Same armed id — the pill and the
+            // card light up together.
+            selected={replyTaskId === run.id}
+            onSelect={() =>
+              setReplyTaskId((current) => (current === run.id ? null : run.id))
+            }
             // Error tier: retry re-sends the same prompt (a new run
             // replaces this one); switching lands on the Providers view.
             onRetry={() => handleSend(run.prompt)}
@@ -722,6 +793,16 @@ export function App() {
             onSubmitCode={submitClaudeCode}
             onConnected={(provider) => updateSettings({ provider })}
             onSkip={() => setAuthGate(false)}
+            // Reauth fell through — same escape hatch as a failed run:
+            // land on the Providers view to connect a different account.
+            onSwitchProvider={() => {
+              setAuthGate(false);
+              patchShell({
+                mode: 'open',
+                menuOpen: true,
+                activeView: 'providers',
+              });
+            }}
             onDone={() => {
               setAuthGate(false);
               promptRef.current?.focus();
@@ -879,6 +960,23 @@ export function App() {
           ))}
       </AnimatePresence>
 
+      {/* The agent's markers — amber, quiet, never scrolling on their own.
+          One at most carries the open note (the focused one). */}
+      <AnimatePresence>
+        {agentHighlights.map((highlight) => (
+          <AgentHighlight
+            key={highlight.id}
+            highlight={highlight}
+            focused={focusedHighlightId === highlight.id}
+            onFocusToggle={() =>
+              setFocusedHighlightId((current) =>
+                current === highlight.id ? null : highlight.id,
+              )
+            }
+          />
+        ))}
+      </AnimatePresence>
+
       {/* `layout` + `layoutDependency` FLIP-animates the dock when the
           Location setting changes, instead of teleporting between corners.
           Centering uses the native CSS `translate` property (Tailwind v4),
@@ -952,6 +1050,14 @@ export function App() {
                         onSelect={selectView}
                         settings={settings}
                         onSettingsChange={updateSettings}
+                        // Erase everything: the background wipes storage and
+                        // reloads the extension; this shell dies with it and
+                        // a fresh one remounts on the first-run sign-in.
+                        onResetAll={() =>
+                          void browser.runtime
+                            .sendMessage({ type: MESSAGE.RESET_ALL })
+                            .catch(() => {})
+                        }
                         tasks={{
                           items: tasks,
                           onOpenReport: (task) =>

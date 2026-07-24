@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { useId, useState, type ReactNode } from 'react';
+import { useId, useState, type MouseEvent, type ReactNode } from 'react';
 import {
   HiArrowPath,
   HiArrowTopRightOnSquare,
@@ -97,6 +97,23 @@ export type AnswerCardProps = {
   /** Error tier: open the Providers view — maybe another AI can. */
   onSwitchProvider?: () => void;
   onDismiss?: () => void;
+  /**
+   * This answer is referenced: the next message continues its task. Same
+   * outline language as a referenced task pill — the two mark the same
+   * underlying reference.
+   */
+  selected?: boolean;
+  /**
+   * Card body clicked — toggle referencing this answer's task (the caller
+   * flips). Clicks on the card's own controls and text selections don't
+   * count. Answer and artifact tiers only.
+   */
+  onSelect?: () => void;
+  /**
+   * A `highlight:` link in the answer markdown was clicked — the shell
+   * scrolls the page to that marker and opens its note.
+   */
+  onHighlightLink?: (id: string) => void;
 };
 
 export function AnswerCard({
@@ -119,10 +136,13 @@ export function AnswerCard({
   onRetry,
   onSwitchProvider,
   onDismiss,
+  selected = false,
+  onSelect,
+  onHighlightLink,
 }: AnswerCardProps) {
   const [copied, setCopied] = useState(false);
   const [hovered, setHovered] = useState(false);
-  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set());
 
   const multi = choiceMode === 'multi';
   const hasChoices = (choices?.length ?? 0) > 0;
@@ -133,7 +153,7 @@ export function AnswerCard({
   // Picking only stages the selection — submit is what replies.
   const pick = (choice: string) => {
     if (multi) {
-      setSelected((current) => {
+      setChosen((current) => {
         const next = new Set(current);
         if (next.has(choice)) next.delete(choice);
         else next.add(choice);
@@ -141,17 +161,42 @@ export function AnswerCard({
       });
       return;
     }
-    setSelected(new Set([choice]));
+    setChosen(new Set([choice]));
   };
 
   // Submitting is a reply — the card's job is done, so it closes itself.
   // Dismiss fires first so a shell that starts the next run on submit
   // doesn't have that fresh run cleared by a trailing dismiss.
   const submitChoices = () => {
-    if (selected.size === 0) return;
+    if (chosen.size === 0) return;
     onDismiss?.();
-    onSubmitChoices?.((choices ?? []).filter((choice) => selected.has(choice)));
+    onSubmitChoices?.((choices ?? []).filter((choice) => chosen.has(choice)));
   };
+
+  // Body clicks toggle the reference — but only true body clicks: taps on
+  // the card's own controls have their own meaning, and a click that ends
+  // a text selection is a copy, not a reference.
+  const bodyClick = onSelect
+    ? (event: MouseEvent<HTMLDivElement>) => {
+        if ((event.target as HTMLElement).closest('button')) return;
+        if (window.getSelection()?.toString()) return;
+        onSelect();
+      }
+    : undefined;
+
+  // The referenced outline — identical to a referenced task pill's, since
+  // both arm the same follow-up. Selectable cards also read as clickable:
+  // pointer cursor and a border that firms up on hover, like the pills.
+  const selectionRing = selected
+    ? 'webbutler:cursor-pointer webbutler:border-[var(--wc-selection)] webbutler:shadow-[0_0_0_0.5px_var(--wc-selection)]'
+    : onSelect
+      ? 'webbutler:cursor-pointer webbutler:border-[var(--wc-border)] webbutler:hover:border-[var(--wc-border-strong)]'
+      : 'webbutler:border-[var(--wc-border)]';
+  const selectTitle = onSelect
+    ? selected
+      ? 'Referenced — your next message adds onto this answer'
+      : 'Click to reference this answer in your next message'
+    : undefined;
 
   const copy = () => {
     void navigator.clipboard?.writeText(text);
@@ -226,7 +271,12 @@ export function AnswerCard({
   if (tier === 'artifact') {
     // Handoff, not content: the report renders in the side panel.
     return (
-      <div className="webbutler:flex webbutler:w-full webbutler:items-center webbutler:gap-2.5 webbutler:rounded-[20px] webbutler:border webbutler:border-[var(--wc-border)] webbutler:bg-[var(--wc-surface)] webbutler:py-2.5 webbutler:pr-2 webbutler:pl-3 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150">
+      <div
+        onClick={bodyClick}
+        data-referenced={selected || undefined}
+        title={selectTitle}
+        className={`webbutler:flex webbutler:w-full webbutler:items-center webbutler:gap-2.5 webbutler:rounded-[20px] webbutler:border webbutler:bg-[var(--wc-surface)] webbutler:py-2.5 webbutler:pr-2 webbutler:pl-3 webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-[border-color,box-shadow] webbutler:duration-100 ${selectionRing}`}
+      >
         <span className="webbutler:flex webbutler:size-7 webbutler:shrink-0 webbutler:items-center webbutler:justify-center webbutler:rounded-lg webbutler:bg-[var(--wc-hover-1)] webbutler:text-[var(--wc-selection)]">
           <HiDocumentText size={15} aria-hidden />
         </span>
@@ -346,11 +396,14 @@ export function AnswerCard({
           setHovered(false);
         }
       }}
-      className="webbutler:relative webbutler:w-full webbutler:overflow-hidden webbutler:rounded-[20px] webbutler:border webbutler:border-[var(--wc-border)] webbutler:bg-[var(--wc-surface)] webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150"
+      onClick={bodyClick}
+      data-referenced={selected || undefined}
+      title={selectTitle}
+      className={`webbutler:relative webbutler:w-full webbutler:overflow-hidden webbutler:rounded-[20px] webbutler:border webbutler:bg-[var(--wc-surface)] webbutler:backdrop-blur-2xl webbutler:backdrop-saturate-150 webbutler:transition-[border-color,box-shadow] webbutler:duration-100 ${selectionRing}`}
     >
       {/* Body — chromeless; scrolls inside the capped frame. */}
       <div className="webbutler:max-h-[188px] webbutler:overflow-y-auto webbutler:px-3.5 webbutler:py-2.5">
-        <Markdown text={text} />
+        <Markdown text={text} onHighlightLink={onHighlightLink} />
 
         {/* Multiple-choice follow-up: the agent needs a decision to act.
             Same selection language as the settings panel: quiet rows, no
@@ -362,7 +415,7 @@ export function AnswerCard({
             className="webbutler:flex webbutler:flex-col webbutler:gap-1 webbutler:pt-2.5"
           >
             {choices.map((choice) => {
-              const isChosen = selected.has(choice);
+              const isChosen = chosen.has(choice);
               return (
                 <button
                   key={choice}
@@ -412,10 +465,10 @@ export function AnswerCard({
             <div className="webbutler:flex webbutler:justify-end webbutler:pt-1">
               <button
                 type="button"
-                disabled={selected.size === 0}
+                disabled={chosen.size === 0}
                 onClick={submitChoices}
                 className={`webbutler:rounded-full webbutler:px-3 webbutler:py-1 webbutler:text-[11px] webbutler:font-medium webbutler:transition-colors webbutler:duration-100 ${
-                  selected.size === 0
+                  chosen.size === 0
                     ? 'webbutler:bg-[var(--wc-hover-1)] webbutler:text-[var(--wc-text-4)]'
                     : 'webbutler:cursor-pointer webbutler:bg-[var(--wc-accent)] webbutler:text-[var(--wc-accent-fg)] webbutler:hover:opacity-90'
                 }`}

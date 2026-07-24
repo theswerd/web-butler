@@ -8,7 +8,6 @@ import {
   HiXMark,
 } from 'react-icons/hi2';
 import type { Task, TaskUpdate } from '../../lib/shell';
-import { BowtieMark } from '../shell/BowtieMark';
 import { Markdown } from '../Markdown';
 
 /**
@@ -33,6 +32,9 @@ export type TaskActivityViewProps = {
   /** A "suggested next" chip was tapped — the shell prefills its prompt
       with the suggestion so the user can send (or edit) it. */
   onUseSuggestion?: (text: string) => void;
+  /** A `highlight:` link in an activity message was clicked — relayed to
+      the active tab's shell, where the marker lives. */
+  onHighlightLink?: (id: string) => void;
 };
 
 /** "0:42", "12:04" — elapsed while running, final duration once settled. */
@@ -84,6 +86,7 @@ export function TaskActivityView({
   onOpenReport,
   onOpenExtension,
   onUseSuggestion,
+  onHighlightLink,
 }: TaskActivityViewProps) {
   // Tick each second while running so the elapsed clock moves.
   const [now, setNow] = useState(() => Date.now());
@@ -111,19 +114,19 @@ export function TaskActivityView({
 
   return (
     <div className="webbutler:flex webbutler:h-full webbutler:flex-col webbutler:bg-[var(--wc-surface-solid)]">
-      {/* Masthead — same anatomy as ReportView's. */}
+      {/* Masthead: the prompt IS the header — no brand row above it. The
+          status badge sits inline with the title, top-aligned so it stays
+          put when a long prompt wraps. */}
       <div className="webbutler:shrink-0 webbutler:border-b webbutler:border-[var(--wc-border-hairline)] webbutler:px-4 webbutler:pt-3.5 webbutler:pb-3">
-        <div className="webbutler:flex webbutler:items-center webbutler:gap-1.5 webbutler:pb-2 webbutler:text-[var(--wc-ink)]">
-          <BowtieMark size={13} />
-          <span className="webbutler:text-[9px] webbutler:font-medium webbutler:tracking-[0.07em] webbutler:text-[var(--wc-text-4)] webbutler:uppercase">
-            Task
+        <div className="webbutler:flex webbutler:items-start webbutler:gap-2">
+          <h1 className="webbutler:min-w-0 webbutler:flex-1 webbutler:text-[14px] webbutler:leading-snug webbutler:font-semibold webbutler:text-[var(--wc-ink)]">
+            {task.prompt}
+          </h1>
+          {/* Nudged down to center against the title's first line. */}
+          <span className="webbutler:shrink-0 webbutler:pt-[3px]">
+            <StatusBadge task={task} />
           </span>
-          <span className="webbutler:flex-1" />
-          <StatusBadge task={task} />
         </div>
-        <h1 className="webbutler:text-[14px] webbutler:leading-snug webbutler:font-semibold webbutler:text-[var(--wc-ink)]">
-          {task.prompt}
-        </h1>
         <p className="webbutler:pt-0.5 webbutler:text-[10px] webbutler:tabular-nums webbutler:text-[var(--wc-text-4)]">
           {host ? `${host} · ` : ''}
           {elapsedLabel(task, now)}
@@ -197,7 +200,7 @@ export function TaskActivityView({
               </div>
             ) : (
               <div key={index} className={spacing}>
-                <Markdown text={update.text} />
+                <Markdown text={update.text} onHighlightLink={onHighlightLink} />
               </div>
             );
           })}

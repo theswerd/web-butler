@@ -1,5 +1,19 @@
-import ReactMarkdown, { type Components } from 'react-markdown';
+import type { ElementType } from 'react';
+import ReactMarkdown, {
+  defaultUrlTransform,
+  type Components,
+} from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+
+/** `[label](highlight:ID)` — the agent pointing at a page section it
+    flagged. Not a real URL scheme; intercepted below and never navigated. */
+const HIGHLIGHT_SCHEME = 'highlight:';
+
+/** Pass highlight: hrefs through the sanitizer untouched — the default
+    transform strips unknown schemes, which would blank these links before
+    the renderer could claim them. Everything else keeps the default rules. */
+const urlTransform = (url: string) =>
+  url.startsWith(HIGHLIGHT_SCHEME) ? url : defaultUrlTransform(url);
 
 /**
  * Renderer for model prose — the answer card, the side-panel report view,
@@ -12,19 +26,55 @@ import remarkGfm from 'remark-gfm';
  * The `components` prop is the extension seam: consumers can override or
  * add per-element renderers, which is where product-specific custom
  * components (charts, action buttons) will plug in later.
+ *
+ * `highlight:` links render as marker chips instead of anchors: clicking
+ * one calls `onHighlightLink` with the highlight's id (the shell scrolls
+ * to and focuses that marker). Without a handler the chip still renders —
+ * inert — so prose written for the page degrades gracefully elsewhere.
  */
 export function Markdown({
   text,
   components,
+  onHighlightLink,
 }: {
   text: string;
   components?: Components;
+  onHighlightLink?: (id: string) => void;
 }) {
+  // The anchor renderer closes over the handler, so it's built per render.
+  // Consumer `a` overrides still apply to ordinary links.
+  const anchor: Components['a'] = (props) => {
+    const href = props.href ?? '';
+    if (href.startsWith(HIGHLIGHT_SCHEME)) {
+      const id = href.slice(HIGHLIGHT_SCHEME.length);
+      return (
+        <button
+          type="button"
+          onClick={onHighlightLink ? () => onHighlightLink(id) : undefined}
+          className={`webbutler:inline-flex webbutler:translate-y-px webbutler:items-baseline webbutler:gap-1 webbutler:rounded-full webbutler:border webbutler:border-[#f59e0b]/45 webbutler:bg-[#f59e0b]/10 webbutler:px-1.5 webbutler:py-px webbutler:align-baseline webbutler:text-[11px] webbutler:leading-[1.4] webbutler:font-medium webbutler:text-[var(--wc-ink)] webbutler:transition-colors webbutler:duration-100 ${
+            onHighlightLink
+              ? 'webbutler:cursor-pointer webbutler:hover:border-[#f59e0b] webbutler:hover:bg-[#f59e0b]/20'
+              : 'webbutler:cursor-default'
+          }`}
+        >
+          <span
+            aria-hidden
+            className="webbutler:size-1.5 webbutler:shrink-0 webbutler:self-center webbutler:rounded-full webbutler:bg-[#f59e0b]"
+          />
+          {props.children}
+        </button>
+      );
+    }
+    const Base = (components?.a ?? BASE.a) as ElementType;
+    return <Base {...props} />;
+  };
+
   return (
     <div className="webbutler:flex webbutler:flex-col webbutler:gap-2 webbutler:text-[12px] webbutler:leading-[1.55] webbutler:text-[var(--wc-text-2)]">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        components={components ? { ...BASE, ...components } : BASE}
+        urlTransform={urlTransform}
+        components={{ ...BASE, ...components, a: anchor }}
       >
         {text}
       </ReactMarkdown>

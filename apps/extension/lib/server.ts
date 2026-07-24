@@ -4,6 +4,7 @@ import type {
   BrowserActionResult,
   OpenTab,
   PageContext,
+  PageHighlight,
   ProviderAuth,
   Report,
   SiteExtension,
@@ -213,6 +214,9 @@ export type AgentTurnOutcome =
       /** Follow-up prompts the agent offered — the task's "suggested
           next" chips. */
       suggestions?: string[];
+      /** Page sections the agent flagged — marker overlays on the origin
+          tab, navigated via highlight: links in the outcome markdown. */
+      highlights?: PageHighlight[];
     }
   | { error: string };
 
@@ -331,6 +335,7 @@ export async function runAgentPrompt(
         text?: string;
         outcomes?: AgentOutcome[];
         suggestions?: string[];
+        highlights?: PageHighlight[];
         error?: string;
       };
       try {
@@ -368,6 +373,7 @@ export async function runAgentPrompt(
             { type: 'response', markdown: text || 'Done.' },
           ],
           suggestions: message.suggestions,
+          highlights: message.highlights,
         };
       } else if (message.error) outcome = { error: message.error };
     };
