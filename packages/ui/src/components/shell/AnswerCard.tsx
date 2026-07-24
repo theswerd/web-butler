@@ -290,7 +290,10 @@ export function AnswerCard({
         </div>
         <button
           type="button"
-          onClick={onOpenReport}
+          // Deliberately swallows the click event: hosts pass handlers with
+          // optional params (a report id), and a leaked SyntheticEvent in
+          // that slot breaks runtime messaging (DOM refs don't clone).
+          onClick={() => onOpenReport?.()}
           className="webbutler:flex webbutler:shrink-0 webbutler:cursor-pointer webbutler:items-center webbutler:gap-1 webbutler:rounded-full webbutler:border webbutler:border-[var(--wc-border)] webbutler:px-2.5 webbutler:py-1 webbutler:text-[11px] webbutler:font-medium webbutler:text-[var(--wc-ink)] webbutler:transition-colors webbutler:duration-100 webbutler:hover:bg-[var(--wc-hover-1)]"
         >
           Open

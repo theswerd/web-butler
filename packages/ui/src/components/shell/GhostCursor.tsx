@@ -16,6 +16,11 @@ export type GhostCursorState = {
   label?: string;
   /** Bumps on every press/type so the click ripple re-fires. */
   pressCount: number;
+  /** Bumps on every screenshot so the camera-flash veil replays. */
+  flashCount: number;
+  /** Transient activity pill ("Reviewing network traffic") for agent work
+      with no cursor motion. The App clears it after a beat. */
+  status?: string;
 };
 
 export const INITIAL_GHOST_CURSOR: GhostCursorState = {
@@ -23,6 +28,7 @@ export const INITIAL_GHOST_CURSOR: GhostCursorState = {
   y: 0,
   visible: false,
   pressCount: 0,
+  flashCount: 0,
 };
 
 export function GhostCursor({
@@ -33,8 +39,45 @@ export function GhostCursor({
   accentColor: string;
 }) {
   return (
-    <AnimatePresence>
-      {state.visible ? (
+    <>
+      {/* Camera flash: the whole viewport blinks once per screenshot, so
+          the capture is an event the user saw, not something covert. Keyed
+          remount replays it; it fades to (and stays at) invisible. */}
+      {state.flashCount > 0 ? (
+        <motion.div
+          key={`flash-${state.flashCount}`}
+          aria-hidden
+          initial={{ opacity: 0.3 }}
+          animate={{ opacity: 0 }}
+          transition={{ duration: 0.55, ease: "easeOut" }}
+          className="webbutler:pointer-events-none webbutler:fixed webbutler:inset-0 webbutler:z-[2147483646] webbutler:bg-white"
+        />
+      ) : null}
+
+      {/* Activity pill for cursor-less agent work (network review). */}
+      <AnimatePresence>
+        {state.status ? (
+          <motion.div
+            key="ghost-status"
+            aria-hidden
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className="webbutler:pointer-events-none webbutler:fixed webbutler:top-3 webbutler:left-1/2 webbutler:z-[2147483647] webbutler:-translate-x-1/2"
+          >
+            <span
+              style={{ backgroundColor: accentColor }}
+              className="webbutler:rounded-full webbutler:px-2.5 webbutler:py-1 webbutler:text-[11px] webbutler:font-medium webbutler:text-white webbutler:shadow-md"
+            >
+              {state.status}
+            </span>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {state.visible ? (
         <motion.div
           key="ghost-cursor"
           aria-hidden
@@ -98,7 +141,8 @@ export function GhostCursor({
             </span>
           ) : null}
         </motion.div>
-      ) : null}
-    </AnimatePresence>
+        ) : null}
+      </AnimatePresence>
+    </>
   );
 }

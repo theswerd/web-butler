@@ -47,7 +47,7 @@ async function ensureAttached(tabId: number): Promise<void> {
   attached.add(tabId);
   // Start sniffing traffic for the investigation feature (browser network).
   // Best-effort: input/DOM actions must still work if this fails.
-  netByTab.set(tabId, { records: new Map(), order: [] });
+  netByTab.set(tabId, { records: new Map(), order: [], nextSeq: 1 });
   try {
     await send(tabId, 'Network.enable', {
       maxTotalBufferSize: 10_000_000,
@@ -78,27 +78,54 @@ export async function detachTab(tabId: number): Promise<void> {
 // ---------------------------------------------------------------------------
 
 type NetRecord = {
+  /** Stable per-tab number the agent addresses this record by
+      (`browser network <#seq>`), assigned on capture. */
+  seq: number;
   url: string;
   method: string;
   type?: string; // CDP resourceType: XHR, Fetch, Document, Script…
   status?: number;
   mimeType?: string;
+  requestHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string>;
   requestBody?: string;
   responseBody?: string;
 };
 
-type NetBuffer = { records: Map<string, NetRecord>; order: string[] };
+type NetBuffer = {
+  records: Map<string, NetRecord>;
+  order: string[];
+  nextSeq: number;
+};
 
 const netByTab = new Map<number, NetBuffer>();
 
-/** How many requests we keep per tab, and how much of each body we store. */
+/** How many requests we keep per tab, and how much of each body we store.
+    The list view previews a slice; `network <#id>` shows the full store. */
 const NET_MAX_RECORDS = 200;
-const NET_BODY_STORE = 4000;
+const NET_BODY_STORE = 16_000;
 
-function netPush(tabId: number, requestId: string, record: NetRecord): void {
+/** Header values clipped so one bloated cookie can't drown the detail
+    view; keys are kept verbatim. */
+function clipHeaders(
+  headers: unknown,
+): Record<string, string> | undefined {
+  if (headers == null || typeof headers !== 'object') return undefined;
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+    out[key] = String(value).slice(0, 400);
+  }
+  return out;
+}
+
+function netPush(
+  tabId: number,
+  requestId: string,
+  record: Omit<NetRecord, 'seq'>,
+): void {
   const buf = netByTab.get(tabId);
   if (!buf) return;
-  buf.records.set(requestId, record);
+  buf.records.set(requestId, { ...record, seq: buf.nextSeq++ });
   buf.order.push(requestId);
   while (buf.order.length > NET_MAX_RECORDS) {
     const evicted = buf.order.shift();
@@ -117,6 +144,7 @@ browser.debugger.onEvent.addListener((source, method, params) => {
       url: String(request.url ?? ''),
       method: String(request.method ?? 'GET'),
       type: p.type,
+      requestHeaders: clipHeaders(request.headers),
       requestBody:
         typeof request.postData === 'string'
           ? request.postData.slice(0, NET_BODY_STORE)
@@ -133,6 +161,7 @@ browser.debugger.onEvent.addListener((source, method, params) => {
     const response = p.response ?? {};
     record.status = response.status;
     record.mimeType = response.mimeType;
+    record.responseHeaders = clipHeaders(response.headers);
     if (p.type) record.type = p.type;
     return;
   }
@@ -147,8 +176,17 @@ browser.debugger.onEvent.addListener((source, method, params) => {
       { requestId: String(p.requestId) },
     )
       .then((res) => {
-        if (res && typeof res.body === 'string' && !res.base64Encoded) {
+        if (!res || typeof res.body !== 'string') return;
+        if (!res.base64Encoded) {
           record.responseBody = res.body.slice(0, NET_BODY_STORE);
+        } else if (/json|text|xml|javascript|urlencoded/i.test(record.mimeType ?? '')) {
+          // Some texty responses arrive base64ed (e.g. gzip already
+          // undone but flagged); decode rather than dropping them.
+          try {
+            record.responseBody = atob(res.body).slice(0, NET_BODY_STORE);
+          } catch {
+            /* not actually text — skip */
+          }
         }
       })
       .catch(() => {
@@ -242,6 +280,30 @@ function locateJs(ref: string): string {
   })()`;
 }
 
+/** Pick a <select>'s option by label/value; native dropdown popups are OS
+    chrome, so the value is set directly and the page's handlers fired.
+    Exported for the injected-script behavior check in scripts/. */
+export function selectOptionJs(ref: string, option: string): string {
+  const sel = JSON.stringify(`[data-wb-ref="${ref}"]`);
+  const want = JSON.stringify(option);
+  return `(() => {
+    const el = document.querySelector(${sel});
+    if (!el || el.tagName !== 'SELECT') return { ok: false, notSelect: true };
+    const want = ${want}.trim().toLowerCase();
+    const opts = Array.from(el.options);
+    const label = (o) => (o.label || o.textContent || '').replace(/\\s+/g, ' ').trim();
+    const hit =
+      opts.find((o) => label(o).toLowerCase() === want) ||
+      opts.find((o) => (o.value || '').toLowerCase() === want) ||
+      opts.find((o) => label(o).toLowerCase().includes(want));
+    if (!hit) return { ok: false, options: opts.slice(0, 30).map(label) };
+    el.value = hit.value;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return { ok: true, picked: label(hit) };
+  })()`;
+}
+
 /** Focus a field and select its contents so typed text replaces them. */
 function focusAndSelectJs(ref: string): string {
   const sel = JSON.stringify(`[data-wb-ref="${ref}"]`);
@@ -258,6 +320,16 @@ function focusAndSelectJs(ref: string): string {
 }
 
 type Located = { x: number; y: number; label: string } | null;
+
+/** "example.com" for the navigate status pill; falls back to the raw URL
+    clipped so a bad string still reads. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '') || url.slice(0, 40);
+  } catch {
+    return url.slice(0, 40);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // The action executor.
@@ -278,8 +350,12 @@ export async function performAction(
 ): Promise<BrowserActionResult> {
   await ensureAttached(tabId);
 
+  // Every action announces itself on the page — cursor motion for the
+  // pointer verbs, the status pill for everything that would otherwise be
+  // invisible. The butler never works covertly in a tab the user is watching.
   switch (action.kind) {
     case 'snapshot': {
+      relay({ kind: 'status', text: 'Mapping this page' });
       const els = await evaluate<
         Array<{ ref: string; role: string; name: string; value: string }>
       >(tabId, SNAPSHOT_JS);
@@ -287,6 +363,7 @@ export async function performAction(
     }
 
     case 'read': {
+      relay({ kind: 'status', text: 'Reading this page' });
       const text = await evaluate<string>(
         tabId,
         `((document.body && document.body.innerText) || '')
@@ -296,19 +373,74 @@ export async function performAction(
     }
 
     case 'navigate': {
+      relay({ kind: 'status', text: `Opening ${hostOf(action.url)}` });
       await send(tabId, 'Page.navigate', { url: action.url });
       await sleep(600); // let the commit happen before the next snapshot
       return { ok: true, data: `navigated to ${action.url}` };
     }
 
     case 'back': {
+      relay({ kind: 'status', text: 'Going back' });
       await evaluate(tabId, 'history.back()');
       await sleep(600);
       return { ok: true, data: 'went back one page' };
     }
 
     case 'network': {
-      return { ok: true, data: formatNetwork(netByTab.get(tabId), action.filter) };
+      // Make the invisible visible: the user sees that traffic was reviewed.
+      relay({ kind: 'status', text: 'Reviewing network traffic' });
+      const buf = netByTab.get(tabId);
+      return {
+        ok: true,
+        data:
+          action.seq != null
+            ? formatNetworkDetail(buf, action.seq)
+            : formatNetwork(buf, action.filter),
+      };
+    }
+
+    case 'screenshot': {
+      // Capture FIRST — the flash is feedback, not something to photograph.
+      const res = await send<{ data?: string }>(tabId, 'Page.captureScreenshot', {
+        format: 'jpeg',
+        quality: 70,
+      });
+      if (!res?.data) {
+        return { ok: false, error: 'could not capture the tab (is it visible?)' };
+      }
+      relay({ kind: 'flash' });
+      return { ok: true, data: { screenshotBase64: res.data } };
+    }
+
+    case 'select': {
+      const at = await evaluate<Located>(tabId, locateJs(action.ref));
+      if (!at) {
+        return { ok: false, error: `no element for ref ${action.ref} (re-snapshot)` };
+      }
+      await glide(relay, at.x, at.y, at.label);
+      const picked = await evaluate<{
+        ok: boolean;
+        picked?: string;
+        options?: string[];
+        notSelect?: boolean;
+      }>(tabId, selectOptionJs(action.ref, action.option));
+      relay({ kind: 'hide' });
+      if (!picked?.ok) {
+        if (picked?.notSelect) {
+          return {
+            ok: false,
+            error: `${action.ref} is not a <select> — for custom dropdowns, click it open and click the option`,
+          };
+        }
+        const options = picked?.options?.length
+          ? ` Available options: ${picked.options.join(' | ')}`
+          : '';
+        return {
+          ok: false,
+          error: `no option matching ${JSON.stringify(action.option)} in ${action.ref}.${options}`,
+        };
+      }
+      return { ok: true, data: `selected "${picked.picked}" in ${action.ref}` };
     }
 
     case 'click': {
@@ -343,6 +475,7 @@ export async function performAction(
     }
 
     case 'key': {
+      relay({ kind: 'status', text: `Pressing ${action.key}` });
       await pressKey(tabId, action.key);
       return { ok: true, data: `pressed ${action.key}` };
     }
@@ -390,39 +523,82 @@ async function clickAt(tabId: number, x: number, y: number): Promise<void> {
   });
 }
 
-/** CDP virtual-key metadata for the keys the agent actually presses. */
+/** CDP virtual-key metadata for named keys, looked up case-insensitively. */
 const KEYS: Record<
   string,
   { key: string; code: string; keyCode: number; text?: string }
 > = {
-  Enter: { key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' },
-  Tab: { key: 'Tab', code: 'Tab', keyCode: 9 },
-  Escape: { key: 'Escape', code: 'Escape', keyCode: 27 },
-  Backspace: { key: 'Backspace', code: 'Backspace', keyCode: 8 },
-  ArrowDown: { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
-  ArrowUp: { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 },
-  ArrowLeft: { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 },
-  ArrowRight: { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39 },
+  enter: { key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' },
+  tab: { key: 'Tab', code: 'Tab', keyCode: 9 },
+  escape: { key: 'Escape', code: 'Escape', keyCode: 27 },
+  backspace: { key: 'Backspace', code: 'Backspace', keyCode: 8 },
+  delete: { key: 'Delete', code: 'Delete', keyCode: 46 },
+  space: { key: ' ', code: 'Space', keyCode: 32, text: ' ' },
+  home: { key: 'Home', code: 'Home', keyCode: 36 },
+  end: { key: 'End', code: 'End', keyCode: 35 },
+  pageup: { key: 'PageUp', code: 'PageUp', keyCode: 33 },
+  pagedown: { key: 'PageDown', code: 'PageDown', keyCode: 34 },
+  arrowdown: { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
+  arrowup: { key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 },
+  arrowleft: { key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 },
+  arrowright: { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39 },
 };
 
-async function pressKey(tabId: number, name: string): Promise<void> {
-  const k = KEYS[name];
-  if (!k) throw new Error(`unsupported key: ${name}`);
-  await send(tabId, 'Input.dispatchKeyEvent', {
-    type: 'keyDown',
+/** CDP modifier bitmask: Alt=1, Ctrl=2, Meta=4, Shift=8. */
+const MODIFIER_BITS: Record<string, number> = {
+  alt: 1,
+  option: 1,
+  ctrl: 2,
+  control: 2,
+  meta: 4,
+  cmd: 4,
+  command: 4,
+  win: 4,
+  shift: 8,
+};
+
+/** Exported for the key-combo parsing check in scripts/. */
+export function resolveKey(
+  name: string,
+): { key: string; code: string; keyCode: number; text?: string } | null {
+  const named = KEYS[name.toLowerCase()];
+  if (named) return named;
+  // Single printable character: "a", "/", "1" — enough for shortcuts
+  // like Ctrl+A or a bare "?" help key.
+  if ([...name].length === 1) {
+    const upper = name.toUpperCase();
+    const code = /^[a-z]$/i.test(name)
+      ? `Key${upper}`
+      : /^[0-9]$/.test(name)
+        ? `Digit${name}`
+        : '';
+    return { key: name, code, keyCode: upper.charCodeAt(0), text: name };
+  }
+  return null;
+}
+
+/** Press a key or a modifier combo ("Enter", "Ctrl+A", "Shift+Tab"). */
+async function pressKey(tabId: number, spec: string): Promise<void> {
+  const parts = spec.split('+').map((part) => part.trim()).filter(Boolean);
+  let modifiers = 0;
+  for (const part of parts.slice(0, -1)) {
+    const bit = MODIFIER_BITS[part.toLowerCase()];
+    if (bit == null) throw new Error(`unsupported modifier: ${part}`);
+    modifiers |= bit;
+  }
+  const k = parts.length > 0 ? resolveKey(parts[parts.length - 1]) : null;
+  if (!k) throw new Error(`unsupported key: ${spec}`);
+  // Held Ctrl/Alt/Meta means a shortcut, not text entry.
+  const text = modifiers & (1 | 2 | 4) ? undefined : k.text;
+  const base = {
     key: k.key,
     code: k.code,
     windowsVirtualKeyCode: k.keyCode,
     nativeVirtualKeyCode: k.keyCode,
-    text: k.text,
-  });
-  await send(tabId, 'Input.dispatchKeyEvent', {
-    type: 'keyUp',
-    key: k.key,
-    code: k.code,
-    windowsVirtualKeyCode: k.keyCode,
-    nativeVirtualKeyCode: k.keyCode,
-  });
+    modifiers,
+  };
+  await send(tabId, 'Input.dispatchKeyEvent', { ...base, type: 'keyDown', text });
+  await send(tabId, 'Input.dispatchKeyEvent', { ...base, type: 'keyUp' });
 }
 
 /** How much of each stored body to actually show the agent per call. */
@@ -456,7 +632,7 @@ function formatNetwork(buf: NetBuffer | undefined, filter?: string): string {
   const clip = (s: string) => (s.length > NET_BODY_SHOW ? `${s.slice(0, NET_BODY_SHOW)}…[truncated]` : s);
   const blocks = shown.map((r) => {
     const status = r.status != null ? String(r.status) : '...';
-    const lines = [`${r.method} ${status}  ${r.url}`];
+    const lines = [`#${r.seq} ${r.method} ${status}  ${r.url}`];
     if (r.requestBody) lines.push(`  → request: ${clip(r.requestBody)}`);
     if (r.responseBody) lines.push(`  ← response: ${clip(r.responseBody)}`);
     return lines.join('\n');
@@ -465,7 +641,48 @@ function formatNetwork(buf: NetBuffer | undefined, filter?: string): string {
     `${rows.length} ${all ? 'requests' : 'XHR/fetch calls'} captured` +
     (shown.length < rows.length ? ` (showing the last ${shown.length})` : '') +
     ':';
-  return `${header}\n${blocks.join('\n\n')}`;
+  const footer =
+    'Run `browser network <#id>` for one call in full (headers + complete bodies).';
+  return `${header}\n${blocks.join('\n\n')}\n\n${footer}`;
+}
+
+/** One captured call in full: the deep-dive behind the list's previews. */
+function formatNetworkDetail(buf: NetBuffer | undefined, seq: number): string {
+  const record = buf
+    ? [...buf.records.values()].find((r) => r.seq === seq)
+    : undefined;
+  if (!record) {
+    return `No captured call #${seq} — it may have been evicted (only the last ${NET_MAX_RECORDS} are kept). Run \`browser network\` to list what's here.`;
+  }
+  const headerBlock = (headers?: Record<string, string>) =>
+    headers && Object.keys(headers).length > 0
+      ? Object.entries(headers)
+          .map(([key, value]) => `  ${key}: ${value}`)
+          .join('\n')
+      : '  (none captured)';
+  const body = (text?: string) =>
+    text
+      ? text.length >= NET_BODY_STORE
+        ? `${text}\n  …[stored body ends here — first ${NET_BODY_STORE} chars]`
+        : text
+      : '  (empty or not captured)';
+  const status = record.status != null ? String(record.status) : '...';
+  return [
+    `#${record.seq} ${record.method} ${status}  ${record.url}`,
+    `type: ${record.type ?? 'unknown'}${record.mimeType ? ` · mime: ${record.mimeType}` : ''}`,
+    '',
+    'request headers:',
+    headerBlock(record.requestHeaders),
+    '',
+    'request body:',
+    body(record.requestBody),
+    '',
+    'response headers:',
+    headerBlock(record.responseHeaders),
+    '',
+    'response body:',
+    body(record.responseBody),
+  ].join('\n');
 }
 
 /** The ref map as the agent reads it: one element per line, aligned. */

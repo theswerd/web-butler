@@ -13,6 +13,7 @@ import {
   type ShellPosition,
   type ThemePref,
 } from "../../../lib/settings";
+import { Toggle } from "./ExtensionsView";
 import { useRovingRows } from "./useRovingRows";
 import { MiniButton, ViewBody, ViewFrame } from "./ViewHeader";
 
@@ -32,7 +33,7 @@ const THEMES: Array<{ id: ThemePref; label: string }> = [
 ];
 
 /** Row order for ArrowUp/ArrowDown roving. */
-const ROW_COUNT = 8;
+const ROW_COUNT = 9;
 
 type SettingsViewProps = {
   settings: Settings;
@@ -367,6 +368,17 @@ export function SettingsView({
 
         {row(
           5,
+          "Starter suggestions",
+          () => onChange({ starters: !settings.starters }),
+          <Toggle
+            on={settings.starters}
+            label="Starter suggestions on the empty prompt"
+            onChange={(starters) => onChange({ starters })}
+          />,
+        )}
+
+        {row(
+          6,
           "Excluded websites",
           () => siteInputRef.current?.focus(),
           <>
@@ -387,7 +399,7 @@ export function SettingsView({
                   ) {
                     // Leave the input, back onto the row for roving.
                     event.preventDefault();
-                    focusRow(5);
+                    focusRow(6);
                   }
                 }}
                 className="webbutler:min-w-0 webbutler:flex-1 webbutler:rounded-md webbutler:border webbutler:border-[var(--wc-border)] webbutler:bg-transparent webbutler:px-1.5 webbutler:py-0.5 webbutler:text-[10px] webbutler:text-[var(--wc-ink)] webbutler:outline-none webbutler:placeholder:text-[var(--wc-text-4)] webbutler:focus:border-[var(--wc-border-strong)]"
@@ -427,7 +439,7 @@ export function SettingsView({
         )}
 
         {row(
-          6,
+          7,
           "Reset to defaults",
           resetDefaults,
           <MiniButton onClick={resetDefaults}>Reset</MiniButton>,
@@ -435,7 +447,7 @@ export function SettingsView({
 
         {onResetAll
           ? row(
-              7,
+              8,
               eraseArmed ? "Signs you out. No undo." : "Erase everything",
               requestErase,
               <button

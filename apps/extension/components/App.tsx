@@ -25,7 +25,9 @@ import {
   OnboardingCard,
   PlusButton,
   PromptPanel,
+  capturePageSignal,
   RepairToast,
+  StarterChips,
   TaskStrip,
   TaskToast,
   type GhostCursorState,
@@ -33,6 +35,7 @@ import {
   capturePageContext,
   hotkeyRecording,
   isExcluded,
+  pickElement,
   popoverVariants,
   resolveHighlight,
   resolvePickedElement,
@@ -145,6 +148,11 @@ export function App() {
   // Deliberately not persisted — selections are DOM-specific to this page.
   const [pickerActive, setPickerActive] = useState(false);
   const [picked, setPicked] = useState<PickedElement[]>([]);
+  // Page starters: see the effect below the onboarding hook (it gates on
+  // onboarding being done).
+  const [starters, setStarters] = useState<string[]>([]);
+  const [startersDismissed, setStartersDismissed] = useState(false);
+  const startersRequested = useRef(false);
   // A task referenced from the strip: the next message is a follow-up onto
   // it (same agent session) instead of a fresh task — the task-shaped
   // sibling of referencing a page element.
@@ -244,10 +252,16 @@ export function App() {
 
   // Best-effort side panel open — the click gesture carries through the
   // message, which Chrome requires for sidePanel.open(). With a reportId,
-  // that artifact becomes the panel's active report.
+  // that artifact becomes the panel's active report. The string guard is
+  // load-bearing: this gets used as a click handler, and a leaked event
+  // object in the reportId slot isn't cloneable — the whole message (and
+  // the open) would silently die inside the catch.
   const openSidePanel = useCallback((reportId?: string) => {
     void browser.runtime
-      .sendMessage({ type: MESSAGE.SIDE_PANEL_OPEN, reportId })
+      .sendMessage({
+        type: MESSAGE.SIDE_PANEL_OPEN,
+        reportId: typeof reportId === 'string' ? reportId : undefined,
+      })
       .catch(() => {});
   }, []);
 
@@ -281,6 +295,50 @@ export function App() {
   // First-run onboarding: hand-holds connecting an AI before the prompt
   // takes over. There's no skipping: it stays until a provider connects.
   const [onboarding, completeOnboarding] = useOnboarding();
+
+  // Page starters: prompt suggestions for the empty prompt box, generated
+  // by the user's own AI from a compact digest of THIS page (cached per
+  // page, background + server). Requested only once the shell is actually
+  // OPEN here — generation spends the user's plan, so a butler collapsed
+  // in the corner never asks. Gone for good (this mount) after the first
+  // send: they're a first-touch affordance, not permanent chrome.
+  const shellMode = shell?.mode;
+  const startersEnabled = settings.starters;
+  useEffect(() => {
+    if (!startersEnabled) return;
+    if (startersRequested.current || startersDismissed) return;
+    if (onboarding !== 'done' || shellMode !== 'open') return;
+    if (!/^https?:/.test(window.location.href)) return;
+    startersRequested.current = true;
+
+    let cancelled = false;
+    // SPAs often paint their real content well after document idle; digest
+    // the page only once it has had a moment to settle.
+    const timer = window.setTimeout(() => {
+      const signal = capturePageSignal(document);
+      if (!signal) return;
+      void browser.runtime
+        .sendMessage({
+          type: MESSAGE.STARTERS_GET,
+          url: window.location.href,
+          title: document.title,
+          signal,
+        })
+        .then((result: unknown) => {
+          if (cancelled || !Array.isArray(result)) return;
+          setStarters(
+            result
+              .filter((entry): entry is string => typeof entry === 'string')
+              .slice(0, 3),
+          );
+        })
+        .catch(() => {});
+    }, 1200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [onboarding, shellMode, startersDismissed, startersEnabled]);
   // Chrome's user-scripts toggle, polled live while onboarding shows: the
   // permissions step blocks on it and auto-advances when it flips.
   const userScriptsEnabled = useUserScriptsEnabled(onboarding === 'pending');
@@ -451,12 +509,34 @@ export function App() {
           missing: missingIds.has(element.id),
         })),
       );
+      // An answer still on screen is implicit context: "make it shorter",
+      // "what about the second one" almost always mean THAT answer. Send it
+      // along (clipped) — unless this message is an explicit follow-up onto
+      // the same task, whose agent session already remembers its answer.
+      // Status pills and error cards aren't answers; extensions reference
+      // their task instead.
+      const openAnswer =
+        run?.result != null &&
+        (run.result.tier === 'answer' || run.result.tier === 'artifact') &&
+        replyTaskId !== run.id
+          ? {
+              prompt: run.prompt,
+              tier: run.result.tier,
+              title: run.result.title,
+              text:
+                run.result.text.length > 6000
+                  ? `${run.result.text.slice(0, 6000)}…`
+                  : run.result.text,
+            }
+          : undefined;
       setSending(true);
+      // First message sent: the starter chips have served their purpose.
+      setStartersDismissed(true);
       // The last answer's markers belong to the question that produced
       // them — a new message starts a clean page.
       setAgentHighlights([]);
       setFocusedHighlightId(null);
-      void startRun(text, page, replyTaskId ?? undefined)
+      void startRun(text, page, replyTaskId ?? undefined, openAnswer)
         .then((result) => {
           if (!result || !('authRequired' in result)) return;
           // Rejected — no AI connected. Put the message back in the box and
@@ -473,7 +553,7 @@ export function App() {
       setPicked([]);
       setReplyTaskId(null);
     },
-    [picked, missingIds, replyTaskId, startRun, patchShell, connectCodex],
+    [picked, missingIds, replyTaskId, run, startRun, patchShell, connectCodex],
   );
 
   // The agent's page highlights arrive with the run's result. They're held
@@ -553,10 +633,52 @@ export function App() {
       if (message?.type === MESSAGE.HIGHLIGHT_FOCUS) {
         jumpToHighlight(message.highlightId);
       }
+      // Context menu: "Ask Web Butler about <selection>". Attach the
+      // selection's containing element as a picked reference (its `text`
+      // is the exact highlighted run, which beats the element's full
+      // visible text), then open with the prompt focused, ready for the
+      // question. If the selection can't be resolved to an element
+      // (iframe, already collapsed), opening focused is still the right
+      // landing.
+      if (message?.type === MESSAGE.ASK_SELECTION) {
+        const selection = window.getSelection();
+        const node =
+          selection && selection.rangeCount > 0
+            ? selection.getRangeAt(0).commonAncestorContainer
+            : null;
+        const el =
+          node instanceof Element ? node : (node?.parentElement ?? null);
+        if (el && !el.closest('web-butler')) {
+          const base = pickElement(el);
+          const chip = message.text
+            ? { ...base, text: message.text.slice(0, 300) }
+            : base;
+          setPicked((prev) =>
+            prev.some((p) => p.selector === chip.selector)
+              ? prev
+              : [...prev, chip],
+          );
+        }
+        setFocusOnOpen(true);
+        patchShell({ mode: 'open', menuOpen: false });
+      }
       if (message?.type === MESSAGE.BROWSER_CURSOR) {
         const cursor = message.cursor;
         if (cursor.kind === 'hide') {
           setGhostCursor((prev) => ({ ...prev, visible: false }));
+        } else if (cursor.kind === 'flash') {
+          // Screenshot taken — replay the camera-flash veil.
+          setGhostCursor((prev) => ({ ...prev, flashCount: prev.flashCount + 1 }));
+        } else if (cursor.kind === 'status') {
+          // Cursor-less activity pill; clears itself after a beat unless a
+          // newer status replaced it in the meantime.
+          const text = cursor.text;
+          setGhostCursor((prev) => ({ ...prev, status: text }));
+          window.setTimeout(() => {
+            setGhostCursor((prev) =>
+              prev.status === text ? { ...prev, status: undefined } : prev,
+            );
+          }, 1800);
         } else if (cursor.kind === 'move') {
           setGhostCursor((prev) => ({
             ...prev,
@@ -745,7 +867,9 @@ export function App() {
             onSubmitChoices={(selected) =>
               startRun(selected.join(', '), capturePageContext([]))
             }
-            onOpenReport={openSidePanel}
+            // Open exactly the report this card published (falls back to
+            // the panel's active report for results predating reportId).
+            onOpenReport={() => openSidePanel(run.result?.reportId)}
             // A highlight: link in the answer — jump to that marker.
             onHighlightLink={jumpToHighlight}
             // The answer is a task's output, so it's referenceable exactly
@@ -923,6 +1047,48 @@ export function App() {
         ) : null}
       </div>
     ) : null;
+
+  // Starter chips: a first-touch affordance for the quiet, empty prompt.
+  // Any sign the user is already mid-flow — a draft, picked elements, live
+  // tasks, an answer on screen, the menu, the sign-in gate — hides them.
+  // Mutually exclusive with contextRow by construction (it needs picks or
+  // tasks; this needs neither), so they share the same stack position.
+  const showStarters =
+    settings.starters &&
+    !startersDismissed &&
+    starters.length > 0 &&
+    onboarding !== 'pending' &&
+    !run &&
+    !sending &&
+    !authGate &&
+    shell?.draft === '' &&
+    !shell.menuOpen &&
+    picked.length === 0 &&
+    stripTasks.length === 0;
+  const starterSlot = (
+    <AnimatePresence>
+      {showStarters ? (
+        <motion.div
+          key="starters"
+          initial={{ opacity: 0, y: isTop ? -4 : 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.98 }}
+          transition={SPRING_UI}
+          className={isTop ? 'webbutler:mt-1.5' : 'webbutler:mb-1.5'}
+        >
+          <StarterChips
+            prompts={starters}
+            // Prefill, never auto-send: the user can edit before committing.
+            // The draft turning non-empty hides the row on its own.
+            onPick={(prompt) => {
+              patchShell({ draft: prompt });
+              promptRef.current?.focus();
+            }}
+          />
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  );
 
   return (
     // `wc-dark` flips the --wc-* theme tokens for the whole shell.
@@ -1110,6 +1276,7 @@ export function App() {
               {!isTop ? answerSlot : null}
               {!isTop ? gateSlot : null}
               {!isTop ? contextRow : null}
+              {!isTop ? starterSlot : null}
 
               {onboarding === 'pending' ? (
                 // First run: the onboarding card takes the prompt's place
@@ -1159,6 +1326,7 @@ export function App() {
                 />
               )}
 
+              {isTop ? starterSlot : null}
               {isTop ? contextRow : null}
               {isTop ? gateSlot : null}
               {isTop ? answerSlot : null}

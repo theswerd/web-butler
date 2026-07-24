@@ -2,6 +2,7 @@ import { storage } from 'wxt/utils/storage';
 import type {
   BrowserAction,
   BrowserActionResult,
+  OpenAnswerContext,
   OpenTab,
   PageContext,
   PageHighlight,
@@ -257,32 +258,61 @@ export type RunAgentOptions = {
   taskId?: string;
   /** The user's open tabs, for envelope context + browser control. */
   openTabs?: OpenTab[];
+  /** The answer on the user's screen at send time — implicit context for
+      unnamed follow-ups ("make it shorter", "what about the second one"). */
+  openAnswer?: OpenAnswerContext;
   /** Streamed session updates (activity feed). */
   onUpdate?: (update: Record<string, unknown>) => void;
   /** A browser action the agent requested — perform it and return the
       result. The turn's stream stays open while this runs. */
   onAction?: (action: BrowserAction) => Promise<BrowserActionResult>;
-  /** User-initiated cancel (the task chip's stop). Aborting propagates
-      through the server's request signal and cancels the agent turn on
-      the VM — not just our read of it. */
+  /** The server-side job id for this turn, announced as the stream's first
+      line. Record it: the turn survives a dropped stream (and a recycled
+      service worker) and can be picked back up with `attachAgentTurn`. */
+  onJob?: (jobId: string) => void;
+  /** Highest replay cursor seen so far — pass it back as `since` when
+      re-attaching so already-seen updates aren't replayed. */
+  onSeq?: (seq: number) => void;
+  /** Stops READING this turn. It does not cancel the agent on the VM —
+      that's `cancelAgentTask`, which the stop button calls alongside. */
   signal?: AbortSignal;
 };
 
+type TurnStreamHandlers = Pick<
+  RunAgentOptions,
+  'onUpdate' | 'onAction' | 'onJob' | 'onSeq' | 'signal'
+>;
+
+/** Terminal errors that mean the CONNECTION died, not the turn: the job is
+    likely still running server-side and worth re-attaching to. */
+const TRANSPORT_ERRORS = new Set([
+  'Could not reach the server',
+  'The agent stream ended unexpectedly',
+  'The agent stopped responding. It may have hit a snag on the server.',
+]);
+
+export function isTransportError(error: string): boolean {
+  return TRANSPORT_ERRORS.has(error);
+}
+
+/** Attach said 404: the server no longer knows the job (it restarted, or
+    the job finished and aged out). Nothing left to re-attach to. */
+export const TURN_GONE_ERROR = 'turn-gone';
+
 /**
- * Run one agent turn on the sandbox VM via the server's ACP bridge.
- * The response is NDJSON: `{"update"}` lines stream while the agent works
+ * Consume one NDJSON turn stream (initial POST or re-attach GET) down to
+ * its terminal line. `{"update"}` lines stream while the agent works
  * (forwarded to `onUpdate`), `{"action"}` lines request a browser action
  * (handed to `onAction`, whose result is POSTed back out-of-band), and
  * exactly one terminal line carries either the outcomes (with the raw
  * reply text) or an error.
  */
-export async function runAgentPrompt(
-  opts: RunAgentOptions,
+async function consumeTurnStream(
+  request: (signal: AbortSignal) => Promise<Response>,
+  handlers: TurnStreamHandlers,
+  opts: { notFoundMeansGone?: boolean } = {},
 ): Promise<AgentTurnOutcome> {
-  const { provider, prompt, page, taskId, openTabs, onUpdate, onAction, signal } =
-    opts;
-  // Aborting the fetch propagates through the server's request signal and
-  // cancels the actual agent turn on the VM — not just our read of it.
+  const { onUpdate, onAction, onJob, onSeq, signal } = handlers;
   const abort = new AbortController();
   let timeoutError: string | null = null;
   const fail = (reason: string) => {
@@ -307,13 +337,11 @@ export async function runAgentPrompt(
     if (!(await ensureInitialized())) {
       return { error: 'Sandbox not ready yet' };
     }
-    const response = await authedFetch('/api/agent/prompt', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, prompt, page, taskId, openTabs }),
-      signal: abort.signal,
-    });
+    const response = await request(abort.signal);
     if (!response.ok || !response.body) {
+      if (response.status === 404 && opts.notFoundMeansGone) {
+        return { error: TURN_GONE_ERROR };
+      }
       const body = await response.json().catch(() => null);
       return {
         error: body?.error ?? `agent request failed: ${response.status}`,
@@ -328,6 +356,8 @@ export async function runAgentPrompt(
     const handleLine = (line: string) => {
       if (!line.trim()) return;
       let message: {
+        job?: string;
+        seq?: number;
         update?: Record<string, unknown>;
         action?: BrowserAction;
         done?: boolean;
@@ -343,6 +373,8 @@ export async function runAgentPrompt(
       } catch {
         return; // torn frame — the terminal line is what matters
       }
+      if (typeof message.job === 'string') onJob?.(message.job);
+      if (typeof message.seq === 'number') onSeq?.(message.seq);
       if (message.update) onUpdate?.(message.update);
       else if (message.action) {
         // Perform it off the read loop so the stream keeps draining
@@ -392,8 +424,12 @@ export async function runAgentPrompt(
         handleLine(buffer.slice(0, index));
         buffer = buffer.slice(index + 1);
       }
+      // The terminal line settles the turn — stop reading rather than
+      // waiting on the server's close (a replayed terminal on re-attach
+      // may arrive on a stream that stays open a beat longer).
+      if (outcome) break;
     }
-    handleLine(buffer);
+    if (!outcome) handleLine(buffer);
 
     return outcome ?? { error: 'The agent stream ended unexpectedly' };
   } catch {
@@ -401,6 +437,104 @@ export async function runAgentPrompt(
   } finally {
     clearTimeout(idleTimer);
     clearTimeout(turnTimer);
+  }
+}
+
+/**
+ * Start one agent turn on the sandbox VM via the server's ACP bridge and
+ * consume its stream. The turn runs as a detached job server-side: if this
+ * stream dies (worker recycled, network blip), the turn keeps going — use
+ * the id from `onJob` with `attachAgentTurn` to pick it back up.
+ */
+export async function runAgentPrompt(
+  opts: RunAgentOptions,
+): Promise<AgentTurnOutcome> {
+  const { provider, prompt, page, taskId, openTabs, openAnswer } = opts;
+  return consumeTurnStream(
+    (signal) =>
+      authedFetch('/api/agent/prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, prompt, page, taskId, openTabs, openAnswer }),
+        signal,
+      }),
+    opts,
+  );
+}
+
+export type AttachAgentOptions = TurnStreamHandlers & {
+  /** The job id announced by the original turn's `onJob`. */
+  jobId: string;
+  /** Last seq this client saw — the server replays everything after it. */
+  since?: number;
+};
+
+/**
+ * Re-attach to a turn job whose stream was lost (recycled service worker,
+ * dropped connection). Missed updates replay from `since`, pending browser
+ * actions are re-delivered, and the turn settles exactly like the original
+ * call would have. `TURN_GONE_ERROR` means the server no longer knows the
+ * job — the task is genuinely dead.
+ */
+export async function attachAgentTurn(
+  opts: AttachAgentOptions,
+): Promise<AgentTurnOutcome> {
+  const params = new URLSearchParams({
+    job: opts.jobId,
+    since: String(opts.since ?? 0),
+  });
+  return consumeTurnStream(
+    (signal) => authedFetch(`/api/agent/attach?${params}`, { signal }),
+    opts,
+    { notFoundMeansGone: true },
+  );
+}
+
+/**
+ * Cancel a task's turns on the server. Since disconnects no longer cancel
+ * anything, this is the only way to actually stop the agent on the VM.
+ * Fire-and-forget: if it doesn't land, the turn just runs to completion
+ * and settles a task the user already marked stopped (first settle wins).
+ */
+export async function cancelAgentTask(taskId: string): Promise<void> {
+  try {
+    await authedFetch('/api/agent/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskId }),
+    });
+  } catch {
+    // Unreachable server — nothing to cancel there anyway.
+  }
+}
+
+/**
+ * Page-specific starter prompts for the empty prompt box, generated by
+ * the active provider's agent on the server (cached there per page).
+ * Starters are decoration: every failure mode — offline, provider not
+ * signed in, thin page — collapses to "no chips" rather than an error.
+ */
+export async function fetchStarters(opts: {
+  provider: DeviceAuthProvider;
+  url: string;
+  title: string;
+  /** Compact page digest (capturePageSignal). */
+  signal: string;
+}): Promise<string[]> {
+  try {
+    if (!(await ensureInitialized())) return [];
+    const response = await authedFetch('/api/agent/suggest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts),
+    });
+    if (!response.ok) return [];
+    const data = (await response.json()) as { starters?: unknown };
+    return Array.isArray(data.starters)
+      ? data.starters.filter((s): s is string => typeof s === 'string')
+      : [];
+  } catch {
+    return [];
   }
 }
 

@@ -6,13 +6,12 @@ import type { ProviderAuth } from "../../../lib/shell";
 import {
   ChatGptLogo,
   ClaudeLogo,
-  FreestyleLogo,
   GrokLogo,
 } from "../provider-logos";
 import { useRovingRows } from "./useRovingRows";
 import { MiniButton, ViewBody, ViewFrame } from "./ViewHeader";
 
-const ROW_COUNT = 4;
+const ROW_COUNT = 3;
 
 type ProvidersViewProps = {
   settings: Settings;
@@ -57,7 +56,6 @@ export function ProvidersView({
     ROW_COUNT,
     onExitLeft,
   );
-  const keyInputRef = useRef<HTMLInputElement | null>(null);
   const claudeCodeRef = useRef<HTMLInputElement | null>(null);
   // Claude's reverse flow: the pasted code lives here until submitted.
   const [claudeCode, setClaudeCode] = useState("");
@@ -292,36 +290,6 @@ export function ProvidersView({
           claudeRow.hint,
         )}
 
-        <p className="webbutler:px-3 webbutler:pt-2.5 webbutler:pb-1 webbutler:text-[10px] webbutler:font-medium webbutler:tracking-wide webbutler:text-[var(--wc-text-4)] webbutler:uppercase">
-          Platform
-        </p>
-
-        {row(
-          3,
-          <FreestyleLogo />,
-          "Freestyle",
-          () => keyInputRef.current?.focus(),
-          <input
-            ref={keyInputRef}
-            type="password"
-            value={settings.freestyleApiKey}
-            placeholder="API key"
-            autoComplete="off"
-            onChange={(event) =>
-              onChange({ freestyleApiKey: event.target.value })
-            }
-            onKeyDown={(event) => {
-              event.stopPropagation();
-              if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-                // Leave the input, back onto the row for roving.
-                event.preventDefault();
-                focusRow(3);
-              }
-            }}
-            className="webbutler:w-[140px] webbutler:shrink-0 webbutler:rounded-md webbutler:border webbutler:border-[var(--wc-border)] webbutler:bg-transparent webbutler:px-1.5 webbutler:py-0.5 webbutler:text-[10px] webbutler:text-[var(--wc-ink)] webbutler:outline-none webbutler:placeholder:text-[var(--wc-text-4)] webbutler:focus:border-[var(--wc-border-strong)]"
-          />,
-          "Provided by the platform. Leave empty to use the built-in key.",
-        )}
       </ViewBody>
     </ViewFrame>
   );

@@ -1289,18 +1289,221 @@ const agentPromptSchema = z.object({
     )
     .max(50)
     .optional(),
+  /** The answer open on the user's screen when they sent this message —
+      what "this"/"that" most likely refers to. Clipped by the client;
+      capped here so a hostile one can't bloat the turn. */
+  openAnswer: z
+    .object({
+      prompt: z.string().max(1000),
+      tier: z.enum(['answer', 'artifact']),
+      title: z.string().max(300).optional(),
+      text: z.string().max(10_000),
+    })
+    .optional(),
 });
+
+// ---------------------------------------------------------------------------
+// Detached turn jobs. A turn used to live and die with the HTTP request
+// that started it — when the extension's MV3 service worker got recycled
+// mid-task, the dropped request cancelled the actual agent turn on the VM.
+// Now the POST route starts a server-side JOB that runs to completion no
+// matter who is listening: connections are just windows onto it. A revived
+// worker re-attaches with GET /api/agent/attach and picks up where the
+// dead one left off; only an explicit POST /api/agent/cancel stops the
+// agent.
+// ---------------------------------------------------------------------------
+
+type TurnJob = {
+  id: string;
+  /** The extension-side task this turn belongs to (cancel targets it). */
+  taskId?: string;
+  userId: string;
+  /** Buffered update lines plus the single terminal line. The seq of
+      lines[i] is baseSeq + i + 1 — absolute and stable across trimming, so
+      a re-attaching client can resume from its last-seen cursor. */
+  lines: Record<string, unknown>[];
+  baseSeq: number;
+  done: boolean;
+  finishedAt?: number;
+  /** Currently attached streams (0..n — the job doesn't care). */
+  listeners: Set<(payload: Record<string, unknown>) => void>;
+  /** Browser actions still waiting on a result, re-delivered on attach so
+      a worker bounce doesn't strand the agent's `browser` call. */
+  pendingActions: Map<string, { id: string }>;
+  /** Explicit user cancel. Client disconnects never touch it. */
+  abort: AbortController;
+};
+
+const turnJobs = new Map<string, TurnJob>();
+
+/** Finished jobs linger so a late re-attach can still collect the terminal
+    line, then get swept. */
+const TURN_JOB_KEEP_MS = 30 * 60_000;
+
+/** Line-buffer cap per job. Old updates fall off the front (baseSeq moves);
+    a re-attaching client mostly needs recent activity plus the terminal. */
+const TURN_JOB_MAX_LINES = 2000;
+
+function newTurnJob(userId: string, taskId?: string): TurnJob {
+  // Opportunistic GC — jobs are only ever born here.
+  for (const [id, job] of turnJobs) {
+    if (
+      job.done &&
+      job.finishedAt !== undefined &&
+      Date.now() - job.finishedAt > TURN_JOB_KEEP_MS
+    ) {
+      turnJobs.delete(id);
+    }
+  }
+  const job: TurnJob = {
+    id: crypto.randomUUID(),
+    taskId,
+    userId,
+    lines: [],
+    baseSeq: 0,
+    done: false,
+    listeners: new Set(),
+    pendingActions: new Map(),
+    abort: new AbortController(),
+  };
+  turnJobs.set(job.id, job);
+  return job;
+}
+
+/** Buffer a line for replay and fan it out to whoever is attached. */
+function emitTurnLine(job: TurnJob, payload: Record<string, unknown>): void {
+  job.lines.push(payload);
+  if (job.lines.length > TURN_JOB_MAX_LINES) {
+    const drop = job.lines.length - TURN_JOB_MAX_LINES;
+    job.lines.splice(0, drop);
+    job.baseSeq += drop;
+  }
+  const seq = job.baseSeq + job.lines.length;
+  for (const listener of job.listeners) listener({ seq, ...payload });
+}
+
+/** Actions are NOT replayable history (a replayed click would double-fire);
+    they live in pendingActions until resolved and are re-sent on attach. */
+function deliverTurnAction(job: TurnJob, action: { id: string }): void {
+  job.pendingActions.set(action.id, action);
+  for (const listener of job.listeners) listener({ action });
+}
+
+/**
+ * One NDJSON window onto a job: replay everything after the caller's
+ * cursor, re-send pending actions, then stream live until the terminal
+ * line. A dropped connection detaches quietly — the job runs on.
+ */
+function streamTurnJob(
+  job: TurnJob,
+  since: number,
+  announce: boolean,
+  signal: AbortSignal,
+): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      let open = true;
+      const write = (payload: Record<string, unknown>) => {
+        if (!open) return;
+        try {
+          controller.enqueue(encoder.encode(JSON.stringify(payload) + '\n'));
+        } catch {
+          open = false; // client gone — detach below, the job runs on
+        }
+      };
+      // Per-connection keepalive (the job itself never heartbeats): pings
+      // make silence abnormal so the extension can time out a dead pipe.
+      const heartbeat = setInterval(() => write({ ping: true }), 20_000);
+      const detach = () => {
+        open = false;
+        clearInterval(heartbeat);
+        job.listeners.delete(listener);
+      };
+      const finish = () => {
+        detach();
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
+      };
+      const listener = (payload: Record<string, unknown>) => {
+        write(payload);
+        if ('done' in payload || 'error' in payload) finish();
+      };
+      if (announce) write({ job: job.id });
+      let sawTerminal = false;
+      job.lines.forEach((line, index) => {
+        const seq = job.baseSeq + index + 1;
+        if (seq <= since) return;
+        write({ seq, ...line });
+        if ('done' in line || 'error' in line) sawTerminal = true;
+      });
+      if (job.done || sawTerminal) {
+        finish();
+        return;
+      }
+      for (const action of job.pendingActions.values()) write({ action });
+      job.listeners.add(listener);
+      signal.addEventListener('abort', detach, { once: true });
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'application/x-ndjson',
+      'Cache-Control': 'no-cache',
+    },
+  });
+}
+
+/**
+ * Fallback DB settle at a job's terminal: if no client ever comes back for
+ * the result (browser closed for good), the task row must not claim
+ * "running" forever. The extension's own settle re-syncs richer fields
+ * (report/extension links, curated outcome text) over this when it does
+ * return; a row the user already stopped is left alone.
+ */
+async function settleTaskRowFromJob(job: TurnJob): Promise<void> {
+  if (!job.taskId) return;
+  const terminal = (job.lines[job.lines.length - 1] ?? {}) as {
+    error?: unknown;
+    text?: unknown;
+  };
+  const error = typeof terminal.error === 'string' ? terminal.error : undefined;
+  const text = typeof terminal.text === 'string' ? terminal.text.trim() : '';
+  const summary = error ?? (text ? text.slice(0, 200) : 'Finished');
+  try {
+    await db
+      .update(task)
+      .set({
+        status: error !== undefined ? 'failed' : 'done',
+        outcome: summary,
+        finishedAt: Date.now(),
+      })
+      .where(
+        and(
+          eq(task.id, job.taskId),
+          eq(task.userId, job.userId),
+          eq(task.status, 'running'),
+        ),
+      );
+  } catch (dbError) {
+    console.warn('[butler] terminal task settle failed:', dbError);
+  }
+}
 
 /**
  * Run one agent turn on the user's sandbox VM over ACP. The prompt is
  * wrapped in the Web Butler envelope (butler.ts): briefing on fresh
  * sessions, page context on every message, and an outcome-file path the
- * agent writes its structured result to. The response is NDJSON: one line
- * per `session/update` from the agent as it works (`{"update": …}`), then
- * exactly one terminal line — `{"done": true, "stopReason", "text",
- * "outcomes"}` with the agent's declared outcomes (short markdown response
- * or long-form artifact), or `{"error"}`. The turn is cancelled if the
- * client disconnects.
+ * agent writes its structured result to. The response is NDJSON: a first
+ * `{"job"}` line naming the detached job, one line per `session/update`
+ * from the agent as it works (`{"seq", "update": …}`), then exactly one
+ * terminal line — `{"done": true, "stopReason", "text", "outcomes"}` with
+ * the agent's declared outcomes (short markdown response or long-form
+ * artifact), or `{"error"}`. Disconnecting does NOT cancel the turn: the
+ * job keeps running and the client re-attaches via /api/agent/attach.
  */
 app.post(
   '/api/agent/prompt',
@@ -1334,7 +1537,7 @@ app.post(
     if (!body.success) {
       return c.json({ error: 'provider and prompt are required' }, 400);
     }
-    const { provider, prompt, page, taskId, openTabs } = body.data;
+    const { provider, prompt, page, taskId, openTabs, openAnswer } = body.data;
     const userId = result.userId;
 
     // Cross-conversation context for the envelope: the full extension
@@ -1400,14 +1603,16 @@ app.post(
           ext.urlPatterns.some((pattern) => matchesPattern(pattern, page.url)),
       })),
       ongoingTasks: ongoingTaskRows.map((row) => ({
-        prompt: clip(row.prompt, 120),
+        prompt: clip(row.prompt, 200),
         startedAt: row.startedAt,
         url: row.url,
       })),
+      // Clips sized so history is genuinely useful for follow-ups ("that
+      // thing from earlier") without letting one verbose task eat the turn.
       recentTasks: recentTaskRows.map((row) => ({
-        prompt: clip(row.prompt, 120),
+        prompt: clip(row.prompt, 200),
         status: row.status,
-        outcome: row.outcome ? clip(row.outcome, 200) : undefined,
+        outcome: row.outcome ? clip(row.outcome, 400) : undefined,
         produced: row.reportId
           ? ('artifact' as const)
           : row.extensionId
@@ -1421,6 +1626,7 @@ app.post(
         url: tab.url,
         active: tab.active,
       })),
+      openAnswer,
       reports: reportRows.map((row) => ({
         id: row.id,
         title: row.title,
@@ -1429,177 +1635,396 @@ app.post(
       })),
     });
 
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        const encoder = new TextEncoder();
-        const line = (payload: Record<string, unknown>) => {
-          try {
-            controller.enqueue(encoder.encode(JSON.stringify(payload) + '\n'));
-          } catch {
-            /* client already gone — the abort signal handles cancellation */
+    const job = newTurnJob(userId, taskId);
+
+    // Browser control: while the turn runs, poll the VM mailbox for
+    // `browser` CLI requests, relay each to whoever is attached as an
+    // {action} line, and let drainActions write the response file that
+    // unblocks the CLI once the extension POSTs its result back. The
+    // extension answers over /api/agent/action-result (resolveBrowser-
+    // Action), not the one-directional job stream. The poll belongs to the
+    // JOB, not the connection — actions keep flowing across re-attaches.
+    const handledActions = new Set<string>();
+    let draining = false;
+    const actionPoll = setInterval(() => {
+      if (draining) return; // don't stack polls if a drain runs long
+      draining = true;
+      void drainActions(vmId, bridge.actionsDir, handledActions, (action) => {
+        deliverTurnAction(job, action);
+        const settled = awaitBrowserAction(action.id, ACTION_TIMEOUT_MS);
+        void settled
+          .catch(() => undefined)
+          .then(() => job.pendingActions.delete(action.id));
+        return settled;
+      })
+        .catch(() => {})
+        .finally(() => {
+          draining = false;
+        });
+    }, 500);
+
+    // The reply is assembled server-side from message chunks so the
+    // terminal line always carries the full text, even if the client
+    // dropped some updates.
+    let reply = '';
+    bridge
+      .prompt(
+        text,
+        (update) => {
+          if (
+            update.sessionUpdate === 'agent_message_chunk' &&
+            typeof (update.content as { text?: string })?.text === 'string'
+          ) {
+            reply += (update.content as { text: string }).text;
           }
-        };
-
-        // Keepalive: a long tool call can legitimately stream nothing for
-        // minutes, which is indistinguishable from a dead server. Pings
-        // make silence abnormal, so the extension can time out a truly
-        // stuck connection; its line parser ignores them.
-        const heartbeat = setInterval(() => line({ ping: true }), 20_000);
-
-        // Browser control: while the turn runs, poll the VM mailbox for
-        // `browser` CLI requests, relay each to the extension as an
-        // {action} line, and let drainActions write the response file that
-        // unblocks the CLI once the extension POSTs its result back. The
-        // extension answers over /api/agent/action-result (resolveBrowser-
-        // Action), not this stream, which is one-directional.
-        const handledActions = new Set<string>();
-        let draining = false;
-        const actionPoll = setInterval(() => {
-          if (draining) return; // don't stack polls if a drain runs long
-          draining = true;
-          void drainActions(vmId, bridge.actionsDir, handledActions, (action) => {
-            line({ action });
-            return awaitBrowserAction(action.id, ACTION_TIMEOUT_MS);
-          })
-            .catch(() => {})
-            .finally(() => {
-              draining = false;
-            });
-        }, 500);
-
-        // The reply is assembled server-side from message chunks so the
-        // terminal line always carries the full text, even if the client
-        // dropped some updates.
-        let reply = '';
-        bridge
-          .prompt(
-            text,
-            (update) => {
-              if (
-                update.sessionUpdate === 'agent_message_chunk' &&
-                typeof (update.content as { text?: string })?.text === 'string'
-              ) {
-                reply += (update.content as { text: string }).text;
-              }
-              line({ update });
-            },
-            c.req.raw.signal,
-          )
-          .then(async ({ stopReason }) => {
-            // The agent's structured declaration of what it produced; a
-            // missing file degrades to the streamed reply text. A file we
-            // REJECTED gets one corrective turn — the agent already did
-            // the work, it just misdeclared it — and if that fails too,
-            // the fallback says so instead of presenting the streamed
-            // reply as if the declared work landed.
-            let read = await readOutcomes(vmId, outcomePath, reply);
-            // At most ONE corrective turn total, shared between the two
-            // failure modes (rejected file, unbacked extension claim):
-            // stacking them would double the tail latency of a turn that
-            // already went long, for an agent that already fumbled once.
-            let retried = false;
-            if (read.invalid && !c.req.raw.signal.aborted) {
-              retried = true;
-              const retryPath = newOutcomePath();
-              try {
-                await bridge.prompt(
-                  outcomeRetryMessage(read.invalid, retryPath),
-                  (update) => line({ update }),
-                  c.req.raw.signal,
-                );
-                const retry = await readOutcomes(vmId, retryPath, reply);
-                // A retry that wrote no file resolves nothing: keep the
-                // original rejection so the warning below still lands,
-                // instead of quietly presenting the streamed reply.
-                if (!retry.invalid && !retry.fileMissing) read = retry;
-              } catch (error) {
-                console.warn(`[butler] outcome retry failed:`, error);
-              }
-            }
-            if (read.invalid) {
-              read.outcomes = [
-                {
-                  type: 'response',
-                  markdown:
-                    `${reply.trim() || 'Done.'}\n\n` +
-                    `**Warning:** the structured result for this turn was malformed (${read.invalid}), ` +
-                    'so anything it claims to have installed or produced was NOT saved. Try asking again.',
-                },
-              ];
-            } else if (
-              !retried &&
-              !c.req.raw.signal.aborted &&
-              claimsExtensionWithoutOutcome(read.outcomes, reply)
-            ) {
-              // The turn SAYS an extension landed but declared none. Same
-              // one-shot correction as a rejected file: the agent either
-              // backs the claim with the real outcome or retracts it.
-              const retryPath = newOutcomePath();
-              try {
-                await bridge.prompt(
-                  extensionClaimRetryMessage(
-                    retryPath,
-                    read.fileMissing === true,
-                  ),
-                  (update) => line({ update }),
-                  c.req.raw.signal,
-                );
-                const retry = await readOutcomes(vmId, retryPath, reply);
-                // Only an actually-written, valid file can settle the
-                // claim; anything less keeps the original outcomes and
-                // earns the warning below.
-                if (!retry.invalid && !retry.fileMissing) read = retry;
-              } catch (error) {
-                console.warn(`[butler] extension claim retry failed:`, error);
-              }
-              // Re-check the outcomes alone: a successful retry either
-              // added the extension outcome or rewrote the response to
-              // retract the claim. If neither happened, the user must see
-              // that nothing was saved.
-              if (claimsExtensionWithoutOutcome(read.outcomes)) {
-                read.outcomes = withExtensionClaimWarning(read.outcomes);
-              }
-            }
-            // Extension outcomes are persisted here, so the terminal line
-            // carries stored ids the client can register directly.
-            const outcomes = await storeExtensionOutcomes(
-              userId,
-              taskId,
-              read.outcomes,
+          emitTurnLine(job, { update });
+        },
+        job.abort.signal,
+      )
+      .then(async ({ stopReason }) => {
+        // The agent's structured declaration of what it produced; a
+        // missing file degrades to the streamed reply text. A file we
+        // REJECTED gets one corrective turn — the agent already did
+        // the work, it just misdeclared it — and if that fails too,
+        // the fallback says so instead of presenting the streamed
+        // reply as if the declared work landed.
+        let read = await readOutcomes(vmId, outcomePath, reply);
+        // At most ONE corrective turn total, shared between the two
+        // failure modes (rejected file, unbacked extension claim):
+        // stacking them would double the tail latency of a turn that
+        // already went long, for an agent that already fumbled once.
+        let retried = false;
+        if (read.invalid && !job.abort.signal.aborted) {
+          retried = true;
+          const retryPath = newOutcomePath();
+          try {
+            await bridge.prompt(
+              outcomeRetryMessage(read.invalid, retryPath),
+              (update) => emitTurnLine(job, { update }),
+              job.abort.signal,
             );
-            line({
-              done: true,
-              stopReason,
-              text: reply,
-              outcomes,
-              suggestions: read.suggestions,
-              highlights: read.highlights,
-            });
-          })
-          .catch((error: unknown) => {
-            console.error(`[acp:${provider}] turn failed:`, error);
-            line({
-              error: error instanceof Error ? error.message : 'agent turn failed',
-            });
-          })
-          .finally(() => {
-            clearInterval(heartbeat);
-            clearInterval(actionPoll);
-            try {
-              controller.close();
-            } catch {
-              /* already closed */
-            }
-          });
-      },
-    });
+            const retry = await readOutcomes(vmId, retryPath, reply);
+            // A retry that wrote no file resolves nothing: keep the
+            // original rejection so the warning below still lands,
+            // instead of quietly presenting the streamed reply.
+            if (!retry.invalid && !retry.fileMissing) read = retry;
+          } catch (error) {
+            console.warn(`[butler] outcome retry failed:`, error);
+          }
+        }
+        if (read.invalid) {
+          read.outcomes = [
+            {
+              type: 'response',
+              markdown:
+                `${reply.trim() || 'Done.'}\n\n` +
+                `**Warning:** the structured result for this turn was malformed (${read.invalid}), ` +
+                'so anything it claims to have installed or produced was NOT saved. Try asking again.',
+            },
+          ];
+        } else if (
+          !retried &&
+          !job.abort.signal.aborted &&
+          claimsExtensionWithoutOutcome(read.outcomes, reply)
+        ) {
+          // The turn SAYS an extension landed but declared none. Same
+          // one-shot correction as a rejected file: the agent either
+          // backs the claim with the real outcome or retracts it.
+          const retryPath = newOutcomePath();
+          try {
+            await bridge.prompt(
+              extensionClaimRetryMessage(retryPath, read.fileMissing === true),
+              (update) => emitTurnLine(job, { update }),
+              job.abort.signal,
+            );
+            const retry = await readOutcomes(vmId, retryPath, reply);
+            // Only an actually-written, valid file can settle the
+            // claim; anything less keeps the original outcomes and
+            // earns the warning below.
+            if (!retry.invalid && !retry.fileMissing) read = retry;
+          } catch (error) {
+            console.warn(`[butler] extension claim retry failed:`, error);
+          }
+          // Re-check the outcomes alone: a successful retry either
+          // added the extension outcome or rewrote the response to
+          // retract the claim. If neither happened, the user must see
+          // that nothing was saved.
+          if (claimsExtensionWithoutOutcome(read.outcomes)) {
+            read.outcomes = withExtensionClaimWarning(read.outcomes);
+          }
+        }
+        // Extension outcomes are persisted here, so the terminal line
+        // carries stored ids the client can register directly.
+        const outcomes = await storeExtensionOutcomes(
+          userId,
+          taskId,
+          read.outcomes,
+        );
+        emitTurnLine(job, {
+          done: true,
+          stopReason,
+          text: reply,
+          outcomes,
+          suggestions: read.suggestions,
+          highlights: read.highlights,
+        });
+      })
+      .catch((error: unknown) => {
+        console.error(`[acp:${provider}] turn failed:`, error);
+        emitTurnLine(job, {
+          error: error instanceof Error ? error.message : 'agent turn failed',
+        });
+      })
+      .finally(() => {
+        clearInterval(actionPoll);
+        job.done = true;
+        job.finishedAt = Date.now();
+        void settleTaskRowFromJob(job);
+      });
 
-    return new Response(stream, {
-      headers: {
-        'Content-Type': 'application/x-ndjson',
-        'Cache-Control': 'no-cache',
+    return streamTurnJob(job, 0, true, c.req.raw.signal);
+  },
+);
+
+/**
+ * Re-attach to a detached turn job after a dropped stream or a recycled
+ * service worker. Replays every buffered line after `since` (the caller's
+ * last-seen seq), re-delivers pending browser actions, then streams live.
+ * 404 means the job is genuinely gone (server restart, or it finished
+ * over 30 minutes ago) — the caller should settle the task as interrupted.
+ */
+app.get(
+  '/api/agent/attach',
+  describeRoute({
+    description:
+      'Re-attach to a running (or recently finished) agent turn job; ' +
+      'streams NDJSON from the given seq cursor to the terminal line',
+    responses: {
+      200: {
+        description: 'NDJSON stream of buffered + live lines',
+        content: { 'application/x-ndjson': {} },
       },
-    });
+      404: {
+        description: 'No such job (finished long ago, or server restarted)',
+        content: { 'application/json': { schema: resolver(errorSchema) } },
+      },
+    },
+  }),
+  async (c) => {
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    if (!session) return c.json({ error: 'Unauthorized' }, 401);
+    const jobId = c.req.query('job');
+    const since = Number(c.req.query('since') ?? '0') || 0;
+    const job = jobId ? turnJobs.get(jobId) : undefined;
+    if (!job || job.userId !== session.user.id) {
+      return c.json({ error: 'no such turn' }, 404);
+    }
+    return streamTurnJob(job, since, false, c.req.raw.signal);
+  },
+);
+
+/**
+ * Explicitly cancel a task's turns. This is the ONLY thing that aborts the
+ * agent on the VM now that disconnects don't — the extension's stop button
+ * calls it alongside dropping its own streams.
+ */
+app.post(
+  '/api/agent/cancel',
+  describeRoute({
+    description: 'Cancel every running turn job belonging to a task',
+    responses: {
+      200: {
+        description: 'Cancel signalled (idempotent)',
+        content: { 'application/json': { schema: resolver(healthSchema) } },
+      },
+    },
+  }),
+  async (c) => {
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    if (!session) return c.json({ error: 'Unauthorized' }, 401);
+    const body = z
+      .object({ taskId: z.string() })
+      .safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: 'taskId is required' }, 400);
+    for (const job of turnJobs.values()) {
+      if (
+        job.userId === session.user.id &&
+        job.taskId === body.data.taskId &&
+        !job.done
+      ) {
+        job.abort.abort();
+      }
+    }
+    return c.json({ ok: true });
+  },
+);
+
+// --- Page starters -----------------------------------------------------------
+// Small, page-specific prompt suggestions for the empty prompt box,
+// generated by the user's own AI. One dedicated ACP session per (vm,
+// provider) — the reserved task id below — kept warm between pages so
+// only the first page pays agent spawn. Results are cached per (user,
+// page) so browsing back and forth doesn't re-bill the user's plan.
+
+/** Reserved bridge task id. Client task ids are UUIDs, so this can't
+    collide with a real conversation. */
+const STARTERS_TASK_ID = 'wb-starters';
+
+const STARTERS_PREAMBLE = `You generate starter prompts for Web Butler, a browser assistant that can answer questions about the page, dig into details, compare options, fill forms, write reports, and install persistent page modifications.
+
+Each message gives you one web page: URL, title, and a text extract. Reply with ONLY a JSON array of 0 to 3 strings — no prose, no markdown fence, nothing else.
+
+Most pages deserve NOTHING. An empty array is the normal answer for app shells, home pages, feeds, dashboards, search pages, and anything the user is just using rather than studying — a person on Apple Music doesn't need "What music does Apple Music have?", and a person on their inbox doesn't need "Summarize my email". Only suggest something when the page gives you a genuinely useful move: a specific thing worth digging into, comparing, extracting, drafting from, or permanently fixing. The bar for each suggestion: a real person would tap it and be glad they did. One great suggestion beats three plausible ones; zero beats one mediocre one.
+
+Each suggestion must be:
+- specific to THIS page: name the actual product, article, repo, form, or topic
+- real work Web Butler can do from here that saves the user effort — never a question the page itself already answers at a glance
+- short: under 56 characters
+- phrased as a request or question, no trailing period
+
+When the extract notes ad/sponsored noise, a persistent cleanup is a good suggestion, e.g. "Hide the ads on this site" or "Clean up the sponsored posts here" — Web Butler installs those as page extensions that stick.
+
+Never output generic filler like "What is this page about?" or "Summarize this page" — when in doubt, return [].`;
+
+const startersCache = new Map<string, { at: number; starters: string[] }>();
+const STARTERS_TTL_MS = 60 * 60 * 1000;
+const STARTERS_CACHE_MAX = 2000;
+/** Turn budget — suggestions are decoration; nobody waits minutes for them. */
+const STARTERS_TIMEOUT_MS = 75_000;
+
+function startersCacheKey(userId: string, url: string): string {
+  try {
+    const u = new URL(url);
+    // The hash is client-side view state, not a different page.
+    return `${userId}:${u.origin}${u.pathname}${u.search}`;
+  } catch {
+    return `${userId}:${url}`;
+  }
+}
+
+/** The model was told "JSON array only", but models decorate — take the
+    outermost bracketed slice and validate the shape strictly. */
+function parseStarters(reply: string): string[] {
+  const start = reply.indexOf('[');
+  const end = reply.lastIndexOf(']');
+  if (start === -1 || end <= start) return [];
+  try {
+    const parsed: unknown = JSON.parse(reply.slice(start, end + 1));
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((entry): entry is string => typeof entry === 'string')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0 && entry.length <= 90)
+      .slice(0, 3);
+  } catch {
+    return [];
+  }
+}
+
+const agentSuggestSchema = z.object({
+  provider: z.enum(['codex', 'grok', 'claude']),
+  url: z.string().max(2000),
+  title: z.string().max(300),
+  /** Compact page digest built by the extension: description, headings,
+      leading text. Capped — this is a hint, not the page snapshot. */
+  signal: z.string().max(4000),
+});
+
+app.post(
+  '/api/agent/suggest',
+  describeRoute({
+    description:
+      'Generate up to 3 page-specific starter prompts with the active ' +
+      'provider. Cached per page; returns {starters: []} when the page is ' +
+      'too thin, the provider is not connected, or generation fails.',
+    responses: {
+      200: {
+        description: 'Starter prompts for this page (possibly empty)',
+        content: { 'application/json': {} },
+      },
+      401: {
+        description: 'No valid session',
+        content: { 'application/json': { schema: resolver(errorSchema) } },
+      },
+      409: {
+        description: 'User has no sandbox yet. Call /api/init first',
+        content: { 'application/json': { schema: resolver(errorSchema) } },
+      },
+    },
+  }),
+  async (c) => {
+    const result = await sandboxVmIdForSession(c.req.raw.headers);
+    if ('error' in result) {
+      return result.error === 'unauthorized'
+        ? c.json({ error: 'Unauthorized' }, 401)
+        : c.json({ error: 'No sandbox. Initialize first.' }, 409);
+    }
+    const body = agentSuggestSchema.safeParse(
+      await c.req.json().catch(() => null),
+    );
+    if (!body.success) {
+      return c.json({ error: 'provider, url, title, signal are required' }, 400);
+    }
+    const { provider, url, title, signal } = body.data;
+
+    const key = startersCacheKey(result.userId, url);
+    const hit = startersCache.get(key);
+    if (hit && Date.now() - hit.at < STARTERS_TTL_MS) {
+      return c.json({ starters: hit.starters });
+    }
+
+    try {
+      const vmId = await withSandboxVm(result.userId, result.vmId, (id) =>
+        Promise.resolve(id),
+      );
+      const bridge = getAcpBridge(vmId, provider, STARTERS_TASK_ID);
+      bridge.setPreamble(STARTERS_PREAMBLE);
+
+      // Bounded: client gone or budget spent → cancel the turn.
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), STARTERS_TIMEOUT_MS);
+      const onClientGone = () => controller.abort();
+      c.req.raw.signal.addEventListener('abort', onClientGone, { once: true });
+
+      let reply = '';
+      try {
+        await bridge.prompt(
+          `Page: ${url}\nTitle: ${title}\n\nExtract:\n${signal}`,
+          (update) => {
+            if (
+              update.sessionUpdate === 'agent_message_chunk' &&
+              typeof (update.content as { text?: string })?.text === 'string'
+            ) {
+              reply += (update.content as { text: string }).text;
+            }
+          },
+          controller.signal,
+        );
+      } finally {
+        clearTimeout(timer);
+        c.req.raw.signal.removeEventListener('abort', onClientGone);
+      }
+
+      const starters = parseStarters(reply);
+      // Cache empties too: a page the model can't say anything specific
+      // about shouldn't be retried on every tab switch.
+      startersCache.set(key, { at: Date.now(), starters });
+      if (startersCache.size > STARTERS_CACHE_MAX) {
+        // Drop the oldest half — Map iterates in insertion order.
+        const stale = [...startersCache.keys()].slice(
+          0,
+          Math.floor(STARTERS_CACHE_MAX / 2),
+        );
+        for (const k of stale) startersCache.delete(k);
+      }
+      return c.json({ starters });
+    } catch (error) {
+      // Provider not signed in, VM mid-provision, agent hiccup — all mean
+      // the same thing to the prompt box: no chips this time. Decoration
+      // must never surface an error state.
+      console.warn(`[starters:${provider}] generation failed:`, error);
+      return c.json({ starters: [] });
+    }
   },
 );
 

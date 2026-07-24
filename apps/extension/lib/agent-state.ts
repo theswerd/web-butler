@@ -3,6 +3,7 @@ import { browser } from 'wxt/browser';
 import {
   MESSAGE,
   type ExtensionsState,
+  type OpenAnswerContext,
   type PageContext,
   type Report,
   type Run,
@@ -26,11 +27,13 @@ import {
 export function useRun(): {
   run: Run | null;
   /** Resolves with the run, or the auth rejection the caller must surface.
-      With `followUpTaskId`, the message rides into that task's session. */
+      With `followUpTaskId`, the message rides into that task's session.
+      `openAnswer` carries the answer that was on screen at send time. */
   start: (
     prompt: string,
     page: PageContext,
     followUpTaskId?: string,
+    openAnswer?: OpenAnswerContext,
   ) => Promise<RunStartResult | null>;
   clear: () => void;
 } {
@@ -61,6 +64,7 @@ export function useRun(): {
       prompt: string,
       page: PageContext,
       followUpTaskId?: string,
+      openAnswer?: OpenAnswerContext,
     ): Promise<RunStartResult | null> => {
       try {
         const result: RunStartResult = await browser.runtime.sendMessage({
@@ -68,6 +72,7 @@ export function useRun(): {
           prompt,
           page,
           followUpTaskId,
+          openAnswer,
         });
         if (result && !('authRequired' in result)) setRun(result);
         return result;

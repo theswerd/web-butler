@@ -3,13 +3,12 @@
 // (wxt storage, runtime messaging) lives in apps/extension instead.
 
 // --- lib ---------------------------------------------------------------------
-export * from './lib/identity';
 export * from './lib/match-patterns';
 export * from './lib/motion';
 export * from './lib/page-elements';
 export * from './lib/settings';
 export * from './lib/shell';
-export * from './lib/view-transitions';
+export * from './lib/page-signal';
 
 // --- fixtures ------------------------------------------------------------------
 export * from './fixtures/answers';
@@ -17,7 +16,6 @@ export * from './fixtures/answers';
 // --- components ---------------------------------------------------------------
 export * from './components/Markdown';
 export * from './components/PromptPanel';
-export * from './components/SharedElement';
 export * from './components/report/ReportView';
 export * from './components/report/TaskActivityView';
 export * from './components/prompt-input/PromptInput';
@@ -35,6 +33,7 @@ export * from './components/shell/RepairToast';
 export * from './components/shell/GhostCursor';
 export * from './components/shell/OnboardingCard';
 export * from './components/shell/PlusButton';
+export * from './components/shell/StarterChips';
 export * from './components/shell/views/ArtifactsView';
 export * from './components/shell/views/ExtensionsView';
 export * from './components/shell/views/ListRow';

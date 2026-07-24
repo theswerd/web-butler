@@ -52,6 +52,12 @@ export default defineConfig({
       // (dev-loop rebuilds, store updates) — manifest content scripts only
       // reach documents loaded after the reload.
       'scripting',
+      // Right-click a text selection → "Ask Web Butler about …".
+      'contextMenus',
+      // Watchdog for in-flight agent turns: if MV3 kills the service
+      // worker mid-task, the alarm wakes a fresh one that re-attaches to
+      // the still-running server-side turn instead of losing it.
+      'alarms',
     ],
     host_permissions: ['<all_urls>'],
     commands: {

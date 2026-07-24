@@ -10,6 +10,7 @@ import {
   type CursorCommand,
   type ExtensionHealth,
   type ExtensionsState,
+  type OpenAnswerContext,
   type OpenTab,
   type PageContext,
   type PanelState,
@@ -30,6 +31,8 @@ import {
 import type { Settings } from '@web-butler/ui';
 import { findAnswerFixture } from '@web-butler/ui/fixtures';
 import {
+  attachAgentTurn,
+  cancelAgentTask,
   clearReportsRemote,
   clearTasksRemote,
   deleteExtension,
@@ -38,8 +41,10 @@ import {
   ensureInitialized,
   fetchExtensions,
   fetchReports,
+  fetchStarters,
   fetchTasks,
   getProviderAuthStatus,
+  isTransportError,
   patchExtension,
   runAgentPrompt,
   startProviderLogin,
@@ -47,7 +52,9 @@ import {
   syncReport,
   syncTask,
   syncTasksSeen,
+  TURN_GONE_ERROR,
   type AgentOutcome,
+  type AgentTurnOutcome,
   type DeviceAuthProvider,
 } from '../lib/server';
 import {
@@ -179,6 +186,70 @@ const MOCK_RUN_MS = 10_000;
 const devBypassAuth = storage.defineItem<boolean>('local:devBypassAuth', {
   fallback: false,
 });
+
+/**
+ * Page starters: AI-generated prompt suggestions for the empty prompt
+ * box, cached per page for the session. The server caches per (user,
+ * page) too — this layer exists so tab switches and SPA revisits don't
+ * even leave the browser.
+ */
+const startersByPage = storage.defineItem<
+  Record<string, { at: number; starters: string[] }>
+>('session:startersByPage', { fallback: {} });
+const STARTERS_TTL_MS = 60 * 60 * 1000;
+const STARTERS_CACHE_MAX = 60;
+/** In-flight generation per page — N tabs on one URL ask once. */
+const startersInFlight = new Map<string, Promise<string[]>>();
+
+function startersKey(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}${u.search}`;
+  } catch {
+    return url;
+  }
+}
+
+async function getStarters(
+  url: string,
+  title: string,
+  signal: string,
+): Promise<string[]> {
+  const key = startersKey(url);
+  const cached = (await startersByPage.getValue())[key];
+  if (cached && Date.now() - cached.at < STARTERS_TTL_MS) {
+    return cached.starters;
+  }
+
+  let flight = startersInFlight.get(key);
+  if (!flight) {
+    flight = (async () => {
+      // Test escape hatch: deterministic, title-specific chips so checks
+      // can exercise the UI without a signed-in provider.
+      if (await devBypassAuth.getValue()) {
+        return [
+          `Dig into "${title.slice(0, 32)}"`,
+          'List the key points here',
+          'Turn this page into a report',
+        ];
+      }
+      const provider = (await settingsItem.getValue()).provider ?? 'codex';
+      const starters = await fetchStarters({ provider, url, title, signal });
+      // Cache empties too — a thin page shouldn't re-ask on every focus.
+      const all = await startersByPage.getValue();
+      const live = Object.entries(all)
+        .filter(([, entry]) => Date.now() - entry.at < STARTERS_TTL_MS)
+        .slice(-STARTERS_CACHE_MAX);
+      await startersByPage.setValue({
+        ...Object.fromEntries(live),
+        [key]: { at: Date.now(), starters },
+      });
+      return starters;
+    })().finally(() => startersInFlight.delete(key));
+    startersInFlight.set(key, flight);
+  }
+  return flight;
+}
 
 /**
  * Provider auth, cached per provider so run gating doesn't exec on the VM
@@ -913,10 +984,12 @@ async function flushActivity() {
 }
 
 /**
- * Cancel handles for in-flight turns, keyed by task id. A task can have
- * more than one turn in flight (a follow-up queued onto a running task),
- * hence a set. In-memory on purpose: the controllers die with the service
- * worker, and the startup orphan sweep settles whatever they were driving.
+ * Cancel handles for in-flight turn READERS, keyed by task id. A task can
+ * have more than one turn in flight (a follow-up queued onto a running
+ * task), hence a set. In-memory on purpose: the controllers die with the
+ * service worker — but the turns themselves don't. Each turn is a detached
+ * job on the server (turnJobsItem below remembers which), and the startup
+ * resume re-attaches to every one instead of settling it.
  */
 const runAborts = new Map<string, Set<AbortController>>();
 
@@ -924,12 +997,14 @@ function trackAbort(taskId: string, abort: AbortController) {
   const set = runAborts.get(taskId) ?? new Set();
   set.add(abort);
   runAborts.set(taskId, set);
+  syncTurnKeepalive();
 }
 
 function untrackAbort(taskId: string, abort: AbortController) {
   const set = runAborts.get(taskId);
   set?.delete(abort);
   if (set?.size === 0) runAborts.delete(taskId);
+  syncTurnKeepalive();
 }
 
 /** True while another turn for this task is still executing — that turn
@@ -938,12 +1013,90 @@ function taskHasLiveTurn(taskId: string): boolean {
   return (runAborts.get(taskId)?.size ?? 0) > 0;
 }
 
-/** Stop a running task: abort every in-flight turn (which cancels the
-    agent on the VM through the request signal) and settle it as stopped
-    right away — first settle wins, so the executors' settles no-op. */
+/** Stop a running task: cancel its server-side jobs (the only thing that
+    actually stops the agent on the VM now that disconnects don't), abort
+    every local reader, and settle it as stopped right away — first settle
+    wins, so the executors' settles no-op. */
 async function cancelTask(id: string) {
+  void cancelAgentTask(id);
   for (const abort of runAborts.get(id) ?? []) abort.abort();
   await settleTask(id, { status: 'stopped', outcome: 'Stopped by you' });
+}
+
+/**
+ * Server-side turn jobs this worker is (or should be) driving, keyed by
+ * job id. Session-scoped like tasks: when the service worker dies
+ * mid-turn, the turn itself keeps running on the server — the next worker
+ * reads this map, re-attaches to each job, and finishes the run as if
+ * nothing happened. Entries are removed when a turn reaches its terminal.
+ */
+type StoredTurnJob = {
+  run: Run;
+  /** Last replay cursor seen (throttled) — re-attach resumes after it. */
+  seq: number;
+};
+
+const turnJobsItem = storage.defineItem<Record<string, StoredTurnJob>>(
+  'session:turnJobs',
+  { fallback: {} },
+);
+
+/** Jobs an executor in THIS worker is already driving — the resume sweep
+    (startup + watchdog alarm) must not attach to them a second time. */
+const drivenJobs = new Set<string>();
+
+async function rememberTurnJob(jobId: string, run: Run) {
+  const all = await turnJobsItem.getValue();
+  await turnJobsItem.setValue({ ...all, [jobId]: { run, seq: 0 } });
+}
+
+async function forgetTurnJob(jobId: string) {
+  const all = await turnJobsItem.getValue();
+  if (!(jobId in all)) return;
+  const { [jobId]: _gone, ...rest } = all;
+  await turnJobsItem.setValue(rest);
+}
+
+/** Throttled cursor writes — updates can arrive many times a second, and
+    the cursor only matters in the rare case that THIS worker dies. */
+const seqFlushedAt = new Map<string, number>();
+
+async function persistTurnSeq(jobId: string, seq: number) {
+  if (Date.now() - (seqFlushedAt.get(jobId) ?? 0) < 2_000) return;
+  seqFlushedAt.set(jobId, Date.now());
+  const all = await turnJobsItem.getValue();
+  if (!all[jobId]) return;
+  await turnJobsItem.setValue({ ...all, [jobId]: { ...all[jobId], seq } });
+}
+
+/** Wakes the worker so the resume sweep can re-attach to stored jobs even
+    if Chrome killed us mid-turn despite the keepalive. */
+const TURN_WATCH_ALARM = 'wb-turn-watch';
+
+/**
+ * MV3 keepalive: Chrome retires an "idle" service worker after ~30s, and a
+ * long agent turn between updates looks exactly like idle. Any extension-
+ * API call resets the clock, so while turns are in flight we tick a cheap
+ * one every 20s. Belt AND suspenders: the watchdog alarm above outlives
+ * this worker, so even a kill mid-turn just means a fresh worker resumes
+ * the job half a minute later.
+ */
+let turnKeepalive: ReturnType<typeof setInterval> | undefined;
+
+function syncTurnKeepalive() {
+  const active = runAborts.size > 0;
+  if (active && turnKeepalive === undefined) {
+    turnKeepalive = setInterval(
+      () => void browser.runtime.getPlatformInfo(),
+      20_000,
+    );
+    void browser.alarms?.create(TURN_WATCH_ALARM, { periodInMinutes: 0.5 });
+  } else if (!active && turnKeepalive !== undefined) {
+    clearInterval(turnKeepalive);
+    turnKeepalive = undefined;
+    // The alarm is cleared by its own handler once no stored jobs remain —
+    // clearing it here would race the final forgetTurnJob write.
+  }
 }
 
 async function saveRun(run: Run) {
@@ -996,24 +1149,73 @@ function guardRun(run: Run, work: Promise<void>) {
   });
 }
 
+const INTERRUPTED_NOTE =
+  'Interrupted: the browser suspended the butler mid-task';
+
 /**
- * Startup sweep: a fresh service worker means every in-flight executor
- * died with the previous one — session storage remembers their tasks and
- * runs as "running"/"working", but nothing is driving them anymore. Left
- * alone they'd say "working" forever (session storage outlives worker
- * restarts, and MV3 recycles workers aggressively). Settle them.
+ * Startup/watchdog sweep: a fresh service worker means every in-flight
+ * READER died with the previous one — but the turns themselves didn't.
+ * They're detached jobs on the server; re-attach to each stored one and
+ * finish its run exactly as the original executor would have. Only tasks
+ * with nothing left to resume (no stored job, or the server no longer has
+ * it) get settled as interrupted — which used to happen to every running
+ * task whenever MV3 breathed on the worker.
  */
-async function settleOrphanedRuns() {
-  const note = 'Interrupted: the browser suspended the butler mid-task';
+async function resumeInterruptedRuns() {
+  const stored = await turnJobsItem.getValue();
+  const resumed = new Set<string>(); // task ids with a live or revived turn
+  for (const [jobId, entry] of Object.entries(stored)) {
+    resumed.add(entry.run.id);
+    if (drivenJobs.has(jobId)) continue; // this worker already reads it
+    guardRun(entry.run, resumeTurn(jobId, entry));
+  }
+  // The live-turn check matters on the alarm path: a just-started turn
+  // hasn't heard its job id yet, and tombstoning it would kill a healthy
+  // run. On a fresh worker it's vacuously true.
   const orphans = (await tasksItem.getValue()).filter(
-    (task) => task.status === 'running',
+    (task) =>
+      task.status === 'running' &&
+      !resumed.has(task.id) &&
+      !taskHasLiveTurn(task.id),
   );
   for (const orphan of orphans) {
-    await settleTask(orphan.id, { status: 'stopped', outcome: note });
+    await settleTask(orphan.id, { status: 'stopped', outcome: INTERRUPTED_NOTE });
   }
   for (const run of Object.values(await runByTab.getValue())) {
-    if (run.status === 'working') await failRun(run, note);
+    if (
+      run.status === 'working' &&
+      !resumed.has(run.id) &&
+      !taskHasLiveTurn(run.id)
+    ) {
+      await failRun(run, INTERRUPTED_NOTE);
+    }
   }
+}
+
+/**
+ * Finish a previous worker's run: re-attach to its server-side job (missed
+ * updates replay from the stored cursor) and land the outcome through the
+ * same finishers the original executor used. A job the server no longer
+ * knows is the one case that still settles as interrupted.
+ */
+async function resumeTurn(jobId: string, entry: StoredTurnJob) {
+  const run = entry.run;
+  const { turn, cancelled } = await driveTurn(run, {
+    kind: 'resume',
+    jobId,
+    since: entry.seq,
+  });
+  if (cancelled) {
+    if (run.scope === 'tab') await dropCancelledTabRun(run);
+    return;
+  }
+  if ('error' in turn && turn.error === TURN_GONE_ERROR) {
+    await settleTask(run.id, { status: 'stopped', outcome: INTERRUPTED_NOTE });
+    await failRun(run, INTERRUPTED_NOTE);
+    return;
+  }
+  if (run.scope === 'tab') await finishTabRun(run, turn);
+  else if (!taskHasLiveTurn(run.id)) await finishGlobalRun(run, turn);
 }
 
 /**
@@ -1058,7 +1260,7 @@ function scheduleTabRun(run: Run) {
       });
     }
 
-    const done: Run = { ...run, status: 'done', result };
+    const done: Run = { ...run, status: 'done', result: { ...result, reportId } };
     await saveRun(done);
     await settleTask(run.id, {
       status: 'done',
@@ -1130,6 +1332,9 @@ function browserActionHandler(tabId: number) {
   };
   return async (action: BrowserAction): Promise<BrowserActionResult> => {
     if (action.kind === 'tabs') {
+      // Answered without the debugger, so it announces itself here rather
+      // than in performAction like every other verb.
+      relay({ kind: 'status', text: 'Checking open tabs' });
       const tabs = await gatherOpenTabs(tabId);
       const lines = tabs.map(
         (tab) =>
@@ -1149,6 +1354,119 @@ async function finishBrowserControl(tabId: number): Promise<void> {
     .catch(() => {});
 }
 
+/** How a turn gets its stream: a fresh prompt POST, or a re-attach to a
+    detached job a previous worker (or a dropped connection) left running. */
+type TurnSource =
+  | {
+      kind: 'prompt';
+      provider: DeviceAuthProvider;
+      page?: PageContext;
+      openAnswer?: OpenAnswerContext;
+    }
+  | { kind: 'resume'; jobId: string; since: number };
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Drive one agent turn to its terminal outcome, surviving connection loss.
+ * The POST's first line announces a detached server-side job; we record it
+ * in session storage (so a future worker can resume it) and transparently
+ * re-attach across transient stream failures — the job keeps running on
+ * the server whether or not anyone is listening. Returns the terminal
+ * outcome plus whether the local reader was aborted (user cancel).
+ */
+async function driveTurn(
+  run: Run,
+  source: TurnSource,
+): Promise<{ turn: AgentTurnOutcome; cancelled: boolean }> {
+  const abort = new AbortController();
+  trackAbort(run.id, abort);
+  let jobId = source.kind === 'resume' ? source.jobId : undefined;
+  let seq = source.kind === 'resume' ? source.since : 0;
+  if (jobId !== undefined) drivenJobs.add(jobId);
+  const handlers = {
+    onUpdate: (update: Record<string, unknown>) =>
+      void appendTaskUpdate(run.id, update),
+    onAction: browserActionHandler(run.tabId),
+    onJob: (id: string) => {
+      jobId = id;
+      drivenJobs.add(id);
+      void rememberTurnJob(id, run);
+    },
+    onSeq: (n: number) => {
+      seq = n;
+      if (jobId !== undefined) void persistTurnSeq(jobId, n);
+    },
+    signal: abort.signal,
+  };
+  try {
+    let turn =
+      source.kind === 'resume'
+        ? await attachAgentTurn({ jobId: source.jobId, since: seq, ...handlers })
+        : await runAgentPrompt({
+            provider: source.provider,
+            prompt: run.prompt,
+            page: source.page,
+            taskId: run.id,
+            openTabs: await gatherOpenTabs(run.tabId),
+            openAnswer: source.openAnswer,
+            ...handlers,
+          });
+    // A dead pipe is not a dead task: while the server still knows the
+    // job, re-attach and keep listening. Backoff stays short — the job
+    // buffers everything missed in between.
+    for (
+      let attempt = 0;
+      attempt < 5 &&
+      jobId !== undefined &&
+      !abort.signal.aborted &&
+      'error' in turn &&
+      isTransportError(turn.error);
+      attempt++
+    ) {
+      await sleep(1_500 * (attempt + 1));
+      if (abort.signal.aborted) break;
+      turn = await attachAgentTurn({ jobId, since: seq, ...handlers });
+    }
+    // Giving up on a job that may still be running server-side (local turn
+    // cap, retries exhausted): cancel it, or the agent keeps working a
+    // task the user sees as failed. No-ops for turns that actually ended
+    // (the job is done) and for user cancels (cancelTask already did it).
+    if (
+      'error' in turn &&
+      turn.error !== TURN_GONE_ERROR &&
+      jobId !== undefined &&
+      !abort.signal.aborted
+    ) {
+      void cancelAgentTask(run.id);
+    }
+    return { turn, cancelled: abort.signal.aborted };
+  } finally {
+    untrackAbort(run.id, abort);
+    void finishBrowserControl(run.tabId);
+    if (jobId !== undefined) {
+      drivenJobs.delete(jobId);
+      seqFlushedAt.delete(jobId);
+      void forgetTurnJob(jobId);
+    }
+  }
+}
+
+/** The one turn error users should never see verbatim. */
+const humanTurnError = (error: string) =>
+  error === TURN_GONE_ERROR
+    ? 'The server lost this task mid-run (it may have restarted). Try again.'
+    : error;
+
+/** User cancel: the task was already settled as stopped (cancelTask);
+    don't render the aborted turn's error as if the run failed. */
+async function dropCancelledTabRun(run: Run) {
+  const current = (await runByTab.getValue())[tabKey(run.tabId)];
+  if (current?.id === run.id && current.status === 'working') {
+    await dropRun(run.tabId);
+  }
+}
+
 /**
  * Real completion for a tab-scoped run: one agent turn on the sandbox VM.
  * The agent declares its outcome — a short response renders as the in-page
@@ -1157,33 +1475,28 @@ async function finishBrowserControl(tabId: number): Promise<void> {
  * tab's answer SLOT — this run keeps executing, and a displaced result
  * still settles its task and announces as a toast in every tab.
  */
-async function executeTabRun(run: Run, provider: DeviceAuthProvider, page: PageContext) {
-  const abort = new AbortController();
-  trackAbort(run.id, abort);
-  const turn = await runAgentPrompt({
+async function executeTabRun(
+  run: Run,
+  provider: DeviceAuthProvider,
+  page: PageContext,
+  openAnswer?: OpenAnswerContext,
+) {
+  const { turn, cancelled } = await driveTurn(run, {
+    kind: 'prompt',
     provider,
-    prompt: run.prompt,
     page,
-    taskId: run.id,
-    openTabs: await gatherOpenTabs(run.tabId),
-    onUpdate: (update) => void appendTaskUpdate(run.id, update),
-    onAction: browserActionHandler(run.tabId),
-    signal: abort.signal,
-  }).finally(() => {
-    untrackAbort(run.id, abort);
-    void finishBrowserControl(run.tabId);
+    openAnswer,
   });
-
-  // User cancel: the task was already settled as stopped (cancelTask);
-  // don't render the aborted turn's error as if the run failed.
-  if (abort.signal.aborted) {
-    const current = (await runByTab.getValue())[tabKey(run.tabId)];
-    if (current?.id === run.id && current.status === 'working') {
-      await dropRun(run.tabId);
-    }
+  if (cancelled) {
+    await dropCancelledTabRun(run);
     return;
   }
+  await finishTabRun(run, turn);
+}
 
+/** Land a tab run's terminal outcome — shared by the live executor and the
+    resume path, so a revived turn finishes exactly like an unbroken one. */
+async function finishTabRun(run: Run, turn: AgentTurnOutcome) {
   let result: RunResult;
   let reportId: string | undefined;
   let extensionId: string | undefined;
@@ -1191,7 +1504,7 @@ async function executeTabRun(run: Run, provider: DeviceAuthProvider, page: PageC
   if ('error' in turn) {
     // Its own tier: a failure must not wear the status pill's checkmark,
     // and it carries recovery actions (retry, switch provider).
-    result = { tier: 'error', text: turn.error };
+    result = { tier: 'error', text: humanTurnError(turn.error) };
   } else {
     // A merge turn declares several extension outcomes — apply them ALL;
     // the display below keys off the primary (first) outcome.
@@ -1204,6 +1517,7 @@ async function executeTabRun(run: Run, provider: DeviceAuthProvider, page: PageC
         title: outcome.title,
         description: outcome.description ?? 'The full write-up is ready.',
         text: outcome.markdown,
+        reportId,
       };
     } else if (outcome.type === 'extension') {
       taskLine = extensionLine;
@@ -1249,7 +1563,7 @@ async function executeTabRun(run: Run, provider: DeviceAuthProvider, page: PageC
         status: 'error' in turn ? 'failed' : 'done',
         outcome:
           'error' in turn
-            ? turn.error
+            ? humanTurnError(turn.error)
             : (taskLine ?? result.title ?? outcomeSnippet(result.text)),
         reportId,
         extensionId,
@@ -1277,31 +1591,29 @@ async function executeGlobalRun(
   run: Run,
   provider: DeviceAuthProvider,
   page: PageContext,
+  openAnswer?: OpenAnswerContext,
 ) {
-  const abort = new AbortController();
-  trackAbort(run.id, abort);
-  const turn = await runAgentPrompt({
+  const { turn, cancelled } = await driveTurn(run, {
+    kind: 'prompt',
     provider,
-    prompt: run.prompt,
     page,
-    taskId: run.id,
-    openTabs: await gatherOpenTabs(run.tabId),
-    onUpdate: (update) => void appendTaskUpdate(run.id, update),
-    onAction: browserActionHandler(run.tabId),
-    signal: abort.signal,
-  }).finally(() => {
-    untrackAbort(run.id, abort);
-    void finishBrowserControl(run.tabId);
+    openAnswer,
   });
 
   // User cancel — cancelTask already settled the task as stopped. A
   // queued follow-up still executing keeps the row running for its turn.
-  if (abort.signal.aborted || taskHasLiveTurn(run.id)) return;
+  if (cancelled || taskHasLiveTurn(run.id)) return;
 
+  await finishGlobalRun(run, turn);
+}
+
+/** Land a global run's terminal outcome — shared by the live executor and
+    the resume path, so a revived turn finishes like an unbroken one. */
+async function finishGlobalRun(run: Run, turn: AgentTurnOutcome) {
   if ('error' in turn) {
     await settleTask(
       run.id,
-      { status: 'failed', outcome: turn.error },
+      { status: 'failed', outcome: humanTurnError(turn.error) },
       { announce: true },
     );
   } else {
@@ -1525,6 +1837,35 @@ export default defineBackground(() => {
     void remountContentScripts();
   });
 
+  // Right-click on a selection → "Ask Web Butler about …". Recreated on
+  // every worker start (removeAll first) so reload/update never trips a
+  // duplicate-id error. %s renders the selection inside the menu label.
+  const ASK_MENU_ID = 'web-butler-ask-selection';
+  if (browser.contextMenus) {
+    void browser.contextMenus
+      .removeAll()
+      .then(() => {
+        browser.contextMenus.create({
+          id: ASK_MENU_ID,
+          title: 'Ask Web Butler about "%s"',
+          contexts: ['selection'],
+        });
+      })
+      .catch(() => {});
+    browser.contextMenus.onClicked.addListener((info, tab) => {
+      if (info.menuItemId !== ASK_MENU_ID || tab?.id == null) return;
+      // The tab's shell attaches the selection's element as a picked
+      // reference and opens with the prompt focused. Best-effort: a page
+      // without a shell (chrome://, PDFs) just drops it.
+      void browser.tabs
+        .sendMessage(tab.id, {
+          type: MESSAGE.ASK_SELECTION,
+          text: info.selectionText ?? '',
+        })
+        .catch(() => {});
+    });
+  }
+
   // Warm the active provider's auth status so the first message doesn't
   // pay the server round-trip inside RUN_START (connected is then served
   // from cache for 10 minutes).
@@ -1534,12 +1875,28 @@ export default defineBackground(() => {
     void cachedProviderStatus(selected);
   });
 
-  // First settle anything the previous service worker left mid-flight
-  // (their executors died with it), then pull task and report history
-  // from the DB into the session caches — this is how finished tasks
-  // (and the reports they link to) from past browser sessions reappear.
-  void settleOrphanedRuns().then(hydrateTasks);
+  // First resume anything the previous service worker left mid-flight
+  // (their readers died with it, but the turns kept running server-side),
+  // then pull task and report history from the DB into the session caches
+  // — this is how finished tasks (and the reports they link to) from past
+  // browser sessions reappear.
+  void resumeInterruptedRuns().then(hydrateTasks);
   void hydrateReports();
+
+  // Watchdog for turns in flight: the alarm survives this worker, so even
+  // if Chrome kills it mid-turn, a fresh worker wakes within ~30s and the
+  // resume sweep re-attaches to every stored job. Self-clearing: once no
+  // jobs remain (and nothing is running here), the alarm removes itself.
+  browser.alarms?.onAlarm.addListener((alarm) => {
+    if (alarm.name !== TURN_WATCH_ALARM) return;
+    void turnJobsItem.getValue().then((jobs) => {
+      const pending = Object.keys(jobs).some((id) => !drivenJobs.has(id));
+      if (pending) void resumeInterruptedRuns();
+      else if (Object.keys(jobs).length === 0 && runAborts.size === 0) {
+        void browser.alarms?.clear(TURN_WATCH_ALARM);
+      }
+    });
+  });
 
   // Cached registrations first (pages loading right now get their scripts
   // without waiting on the network), then refresh from the DB. syncAndInject
@@ -1712,6 +2069,13 @@ export default defineBackground(() => {
         return removeReports(() => false).then(() => clearReportsRemote());
       }
 
+      if (message?.type === MESSAGE.STARTERS_GET) {
+        // Starters never error toward the shell — worst case is [].
+        return getStarters(message.url, message.title, message.signal).catch(
+          () => [],
+        );
+      }
+
       if (message?.type === MESSAGE.SHELL_GET) {
         return Promise.all([
           shellByTab.getValue(),
@@ -1860,8 +2224,15 @@ export default defineBackground(() => {
             // (an HTML snapshot is too big for session storage to keep).
             // guardRun settles the task if the executor itself crashes.
             if (scope === 'tab')
-              guardRun(run, executeTabRun(turnRun, provider, message.page));
-            else guardRun(run, executeGlobalRun(turnRun, provider, message.page));
+              guardRun(
+                run,
+                executeTabRun(turnRun, provider, message.page, message.openAnswer),
+              );
+            else
+              guardRun(
+                run,
+                executeGlobalRun(turnRun, provider, message.page, message.openAnswer),
+              );
           } else {
             // Dev bypass: canned fixture answers, no VM involved.
             if (scope === 'tab') scheduleTabRun(run);
@@ -1997,15 +2368,26 @@ export default defineBackground(() => {
         void open
           .then(async () => {
             // Some Chromium forks resolve the call without showing any
-            // panel UI. Give the panel document a beat to spin up, then
-            // verify it exists — if not, take the tab fallback below.
-            await new Promise((resolve) => setTimeout(resolve, 600));
-            const contexts = await browser.runtime.getContexts({
-              contextTypes: ['SIDE_PANEL'],
-            });
-            if (contexts.length === 0) {
-              throw new Error('open() resolved but no panel appeared');
+            // panel UI — but others (Vivaldi) show the panel while hiding
+            // it from getContexts, and a false negative here used to yank
+            // the user into a fallback tab they didn't want. So the panel
+            // document itself is the primary witness: poll a PANEL_PING
+            // any open panel answers, with getContexts as the secondary
+            // signal, and only give up after the document had ~2.5s to
+            // boot. Only a genuinely absent panel falls through.
+            for (let attempt = 0; attempt < 10; attempt++) {
+              await new Promise((resolve) => setTimeout(resolve, 250));
+              const alive = await browser.runtime
+                .sendMessage({ type: MESSAGE.PANEL_PING })
+                .then((pong) => pong === true)
+                .catch(() => false);
+              if (alive) return;
+              const contexts = await browser.runtime
+                .getContexts({ contextTypes: ['SIDE_PANEL'] })
+                .catch(() => []);
+              if (contexts.length > 0) return;
             }
+            throw new Error('open() resolved but no panel appeared');
           })
           .catch((error) => {
             console.warn('[web-butler] sidePanel.open failed:', error);

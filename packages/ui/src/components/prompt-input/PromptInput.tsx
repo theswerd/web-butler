@@ -161,26 +161,6 @@ export function PromptInputTextarea({
   );
 }
 
-export type PromptInputActionsProps = HTMLAttributes<HTMLDivElement>;
-
-export function PromptInputActions({
-  children,
-  className,
-  ...props
-}: PromptInputActionsProps) {
-  return (
-    <div
-      className={cx(
-        'webbutler:flex webbutler:items-center webbutler:justify-between webbutler:gap-2',
-        className,
-      )}
-      {...props}
-    >
-      {children}
-    </div>
-  );
-}
-
 export type PromptInputActionProps = {
   tooltip?: string;
   children: ReactNode;

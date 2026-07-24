@@ -37,10 +37,11 @@ export type Settings = {
   /** Combo strings like 'meta+e' / 'escape' (lowercase, '+'-joined). */
   hotkeyPrimary: string;
   hotkeyClose: string;
+  /** Starter suggestions on the empty prompt — generated per page with
+      the user's own AI, so turning this off also stops that spend. */
+  starters: boolean;
   /** Hostname patterns; matches the host and its subdomains. */
   excludedSites: string[];
-  /** Freestyle API key — empty means "provided by the platform". */
-  freestyleApiKey: string;
   /** Menu sidebar width (px) — user-draggable via the divider. */
   menuSidebarWidth: number;
 };
@@ -52,8 +53,8 @@ export const DEFAULT_SETTINGS: Settings = {
   provider: 'codex',
   hotkeyPrimary: 'meta+e',
   hotkeyClose: 'escape',
+  starters: true,
   excludedSites: [],
-  freestyleApiKey: '',
   menuSidebarWidth: 148,
 };
 

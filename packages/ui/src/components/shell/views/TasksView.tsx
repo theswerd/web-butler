@@ -1,3 +1,4 @@
+import { motion } from "motion/react";
 import {
   HiArrowPath,
   HiDocumentText,
@@ -6,6 +7,7 @@ import {
   HiOutlineTrash,
 } from "react-icons/hi2";
 import type { Task } from "../../../lib/shell";
+import { BowtieMark } from "../BowtieMark";
 import { ListRow, RowIconButton, RowTime, timeAgo } from "./ListRow";
 import {
   HeaderAction,
@@ -36,40 +38,7 @@ type TasksViewProps = {
   onClear?: (mode: "old" | "all") => void;
 };
 
-/** The status marker: a soft ping while running, tinted once settled.
-    Sized to sit centered against the row's first (12px) text line. */
-function StatusDot({ task }: { task: Task }) {
-  if (task.status === "running") {
-    return (
-      <span className="webbutler:relative webbutler:flex webbutler:size-1.5">
-        <span
-          aria-hidden
-          className="webbutler:absolute webbutler:inline-flex webbutler:h-full webbutler:w-full webbutler:animate-ping webbutler:rounded-full webbutler:bg-[var(--wc-selection)] webbutler:opacity-50"
-        />
-        <span
-          aria-hidden
-          className="webbutler:relative webbutler:inline-flex webbutler:size-1.5 webbutler:rounded-full webbutler:bg-[var(--wc-selection)]"
-        />
-      </span>
-    );
-  }
-  const tone =
-    task.status === "failed"
-      ? "webbutler:bg-[#e5484d]"
-      : task.status === "stopped"
-        ? "webbutler:bg-[var(--wc-text-4)]"
-        : !task.seen
-          ? "webbutler:bg-[var(--wc-selection)]"
-          : "webbutler:bg-[var(--wc-border-hairline)]";
-  return (
-    <span
-      aria-hidden
-      className={`webbutler:size-1.5 webbutler:rounded-full ${tone}`}
-    />
-  );
-}
-
-/** "example.com" — where the prompt was sent from, for the meta line. */
+/** "example.com" — where the prompt was sent from. */
 function hostLabel(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, "");
@@ -79,8 +48,77 @@ function hostLabel(url: string): string {
 }
 
 /**
- * The session's activity, ongoing first, then history newest-first. This
- * list is identical in every tab — it's global state owned by the
+ * A running task: not a list row but a live card — accent-washed, led by
+ * the working bowtie, with the agent's current activity breathing under
+ * the prompt. The card opens the live transcript; trash only drops the
+ * bookkeeping (the work keeps running).
+ */
+function LiveTaskCard({
+  task,
+  onOpen,
+  onRemove,
+}: {
+  task: Task;
+  onOpen?: () => void;
+  onRemove?: () => void;
+}) {
+  const Main = onOpen ? "button" : "div";
+  const host = hostLabel(task.url);
+  return (
+    <div className="webbutler:group webbutler:relative webbutler:mx-1.5 webbutler:overflow-hidden webbutler:rounded-lg webbutler:border webbutler:border-[var(--wc-border-hairline)]">
+      {/* The wash: the theme accent at a whisper, so live rows read as a
+          different temperature than history without shouting. */}
+      <div
+        aria-hidden
+        className="webbutler:absolute webbutler:inset-0 webbutler:bg-[var(--wc-selection)] webbutler:opacity-[0.05]"
+      />
+      <div className="webbutler:relative webbutler:flex webbutler:w-full webbutler:items-start webbutler:gap-2 webbutler:py-2 webbutler:pr-2 webbutler:pl-2.5">
+        <Main
+          {...(onOpen ? { type: "button" as const, onClick: onOpen } : {})}
+          title={onOpen ? "Watch live" : undefined}
+          className={`webbutler:flex webbutler:min-w-0 webbutler:flex-1 webbutler:items-start webbutler:gap-2 webbutler:text-left ${
+            onOpen ? "webbutler:cursor-pointer" : ""
+          }`}
+        >
+          <span className="webbutler:flex webbutler:h-4 webbutler:shrink-0 webbutler:items-center">
+            <BowtieMark size={13} working knot="var(--wc-selection)" />
+          </span>
+          <span className="webbutler:min-w-0 webbutler:flex-1">
+            <span className="webbutler:block webbutler:truncate webbutler:text-[12px] webbutler:leading-4 webbutler:font-medium webbutler:text-[var(--wc-ink)]">
+              {task.prompt}
+            </span>
+            {/* The living line: what it's doing right now, breathing. */}
+            <motion.span
+              animate={{ opacity: [0.55, 1, 0.55] }}
+              transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+              className="webbutler:block webbutler:truncate webbutler:pt-px webbutler:text-[11px] webbutler:text-[var(--wc-text-2)]"
+            >
+              {task.activity ?? "Working…"}
+            </motion.span>
+          </span>
+        </Main>
+        {onRemove ? (
+          <RowIconButton
+            title="Remove (keeps running)"
+            ariaLabel={`Remove: ${task.prompt}`}
+            onClick={onRemove}
+            hoverReveal
+          >
+            <HiOutlineTrash size={11} aria-hidden />
+          </RowIconButton>
+        ) : null}
+        <RowTime>
+          {host ? `${host} · ` : ""}
+          {timeAgo(task.startedAt)}
+        </RowTime>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The session's activity, live work first, then history newest-first.
+ * This list is identical in every tab — it's global state owned by the
  * background script. Unseen finished rows carry an accent dot; opening
  * this view marks everything seen (the shell sends that, so badges drop
  * in all tabs at once).
@@ -115,12 +153,11 @@ export function TasksView({
 
   const row = (task: Task) => {
     // The row's main click always opens the task itself — its transcript
-    // in the side panel (live while running, a replay once settled). What
-    // the task PRODUCED is a separate thing with its own button on the
-    // right: a report chip opens the report, an extension chip jumps to
-    // the Extensions view. One row, two destinations, no guessing.
-    const isRunning = task.status === "running";
-    const highlight = isRunning || !task.seen;
+    // in the side panel (a replay once settled). What the task PRODUCED
+    // is a separate thing with its own button on the right: a report chip
+    // opens the report, an extension chip jumps to the Extensions view.
+    // One row, two destinations, no guessing.
+    const highlight = !task.seen;
     const retryable =
       onRetry && (task.status === "failed" || task.status === "stopped");
     // The one word of status the outcome line leads with — colored only
@@ -133,8 +170,7 @@ export function TasksView({
       ) : task.status === "stopped" ? (
         <span className="webbutler:text-[var(--wc-text-4)]">Stopped</span>
       ) : null;
-    // The living middle line: what it's doing (running) or how it ended.
-    const secondary = isRunning ? (task.activity ?? "Working…") : task.outcome;
+    const host = hostLabel(task.url);
     // The output chip: what this task left behind, opened directly.
     const output =
       task.status === "done" && task.reportId && onOpenReport
@@ -158,24 +194,43 @@ export function TasksView({
         onOpen={onOpenTask && (() => onOpenTask(task))}
         openTitle="View task"
         leading={
-          // Fixed-width status column, dot centered on the first line, so
-          // every row's text starts on the same axis.
+          // Fixed-width column so every row's text starts on one axis:
+          // an accent dot only while the outcome is unseen — seen history
+          // doesn't need per-row furniture.
           <span className="webbutler:flex webbutler:h-4 webbutler:w-2 webbutler:shrink-0 webbutler:items-center webbutler:justify-center">
-            <StatusDot task={task} />
+            <span
+              aria-hidden
+              className={`webbutler:size-1.5 webbutler:rounded-full ${
+                task.status === "failed"
+                  ? "webbutler:bg-[#e5484d]"
+                  : highlight
+                    ? "webbutler:bg-[var(--wc-selection)]"
+                    : "webbutler:bg-[var(--wc-border-hairline)]"
+              }`}
+            />
           </span>
         }
         title={task.prompt}
         muted={!highlight}
         secondary={
-          secondary || statusWord ? (
+          // One line tells the whole story: how it ended, what came back,
+          // where it ran — instead of three stacked gray lines.
+          statusWord || task.outcome || host ? (
             <>
               {statusWord}
-              {statusWord && secondary ? " · " : ""}
-              {secondary}
+              {statusWord && task.outcome ? " · " : ""}
+              {task.outcome}
+              {host && (statusWord || task.outcome) ? (
+                <span className="webbutler:text-[var(--wc-text-4)]">
+                  {" "}
+                  · {host}
+                </span>
+              ) : (
+                host
+              )}
             </>
           ) : null
         }
-        meta={hostLabel(task.url) || null}
       >
         {output ? (
           // Always visible — the deliverable is the row's point, not a
@@ -207,9 +262,7 @@ export function TasksView({
         ) : null}
         {onRemove ? (
           <RowIconButton
-            title={
-              task.status === "running" ? "Remove (keeps running)" : "Remove"
-            }
+            title="Remove"
             ariaLabel={`Remove: ${task.prompt}`}
             onClick={() => onRemove(task)}
             hoverReveal
@@ -217,11 +270,7 @@ export function TasksView({
             <HiOutlineTrash size={11} aria-hidden />
           </RowIconButton>
         ) : null}
-        <RowTime>
-          {task.status === "running"
-            ? "now"
-            : timeAgo(task.finishedAt ?? task.startedAt)}
-        </RowTime>
+        <RowTime>{timeAgo(task.finishedAt ?? task.startedAt)}</RowTime>
       </ListRow>
     );
   };
@@ -251,10 +300,21 @@ export function TasksView({
         {shown.length === 0 ? (
           <ListNote>Nothing matches "{query.trim()}".</ListNote>
         ) : null}
-        {running.map(row)}
+        {running.length > 0 ? (
+          <div className="webbutler:flex webbutler:flex-col webbutler:gap-1 webbutler:pt-1 webbutler:pb-0.5">
+            {running.map((task) => (
+              <LiveTaskCard
+                key={task.id}
+                task={task}
+                onOpen={onOpenTask && (() => onOpenTask(task))}
+                onRemove={onRemove && (() => onRemove(task))}
+              />
+            ))}
+          </div>
+        ) : null}
         {/* A quiet seam between what's moving and what's history. */}
         {running.length > 0 && settled.length > 0 ? (
-          <div className="webbutler:flex webbutler:items-center webbutler:gap-2 webbutler:px-3 webbutler:pt-1.5 webbutler:pb-1">
+          <div className="webbutler:flex webbutler:items-center webbutler:gap-2 webbutler:px-3 webbutler:pt-2 webbutler:pb-1">
             <span className="webbutler:text-[9px] webbutler:font-medium webbutler:tracking-[0.07em] webbutler:text-[var(--wc-text-4)] webbutler:uppercase">
               Earlier
             </span>

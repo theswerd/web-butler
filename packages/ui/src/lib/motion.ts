@@ -44,28 +44,6 @@ export const popoverVariants: Variants = {
   },
 };
 
-/**
- * Cross-fade between popover bodies (menu <-> sheet). Bodies are absolutely
- * bottom-anchored so size differences never shift layout — keep movement
- * minimal here.
- */
-export const popoverBodyVariants: Variants = {
-  enter: {
-    opacity: 0,
-    scale: 0.985,
-  },
-  center: {
-    opacity: 1,
-    scale: 1,
-    transition: SPRING_UI,
-  },
-  exit: {
-    opacity: 0,
-    scale: 0.985,
-    transition: FADE_FAST,
-  },
-};
-
 /** Whole-shell swap: collapsed pill <-> open dock (bottom-right origin). */
 export const shellVariants: Variants = {
   hidden: {

@@ -41,6 +41,10 @@ export const browserActionSchema = z.discriminatedUnion('kind', [
   z.object({ id: z.string(), kind: z.literal('tabs') }),
   z.object({ id: z.string(), kind: z.literal('snapshot') }),
   z.object({ id: z.string(), kind: z.literal('read') }),
+  // The tab's viewport as a JPEG — the agent's eyes. The extension returns
+  // base64; the CLI writes it to a file the agent opens with its own
+  // image-reading tool.
+  z.object({ id: z.string(), kind: z.literal('screenshot') }),
   z.object({ id: z.string(), kind: z.literal('navigate'), url: z.string() }),
   z.object({ id: z.string(), kind: z.literal('back') }),
   z.object({ id: z.string(), kind: z.literal('click'), ref: z.string() }),
@@ -51,12 +55,23 @@ export const browserActionSchema = z.discriminatedUnion('kind', [
     text: z.string(),
     submit: z.boolean().optional(),
   }),
+  // Pick an <option> in a <select> by visible text (native dropdowns can't
+  // be driven by synthetic clicks — the popup is OS chrome).
+  z.object({
+    id: z.string(),
+    kind: z.literal('select'),
+    ref: z.string(),
+    option: z.string(),
+  }),
   z.object({ id: z.string(), kind: z.literal('key'), key: z.string() }),
   z.object({ id: z.string(), kind: z.literal('scroll'), dy: z.number() }),
+  // List captured traffic (filter = url substring | 'all'), or one call's
+  // full detail (seq = its #id from the list).
   z.object({
     id: z.string(),
     kind: z.literal('network'),
     filter: z.string().optional(),
+    seq: z.number().optional(),
   }),
 ]);
 
@@ -198,13 +213,16 @@ function usage() {
     '  tabs                       list open tabs\\n' +
     '  snapshot                   list interactive elements (with refs) on the active tab\\n' +
     '  read                       read the visible text of the active tab\\n' +
-    '  network [filter]           recent XHR/fetch calls on the active tab (method, status, url, bodies); [filter] = url substring, or "all" for every request\\n' +
+    '  screenshot                 capture the active tab to a JPEG file; open that image to SEE the page\\n' +
+    '  network [filter]           recent XHR/fetch calls (#id, method, status, url, body previews); [filter] = url substring, or "all" for every request\\n' +
+    '  network <#id>              one captured call in full: headers and complete stored bodies\\n' +
     '  navigate <url>             go to a URL\\n' +
     '  back                       go back one page\\n' +
     '  click <ref>                click the element with that ref\\n' +
     '  type <ref> <text...>       focus the element and type text\\n' +
     '  type --submit <ref> <text> type then press Enter\\n' +
-    '  key <Key>                  press a key (Enter, Tab, Escape, ArrowDown…)\\n' +
+    '  select <ref> <option...>   pick a dropdown option by its visible text\\n' +
+    '  key <Key|Combo>            press a key or combo (Enter, Escape, Ctrl+A, Shift+Tab, Meta+Enter…)\\n' +
     '  scroll <dy>                scroll vertically by dy pixels (negative = up)',
   );
   process.exit(2);
@@ -220,10 +238,18 @@ try {
   if (cmd === 'tabs') action = { id, kind: 'tabs' };
   else if (cmd === 'snapshot') action = { id, kind: 'snapshot' };
   else if (cmd === 'read') action = { id, kind: 'read' };
-  else if (cmd === 'network') action = { id, kind: 'network', filter: argv[1] };
+  else if (cmd === 'screenshot') action = { id, kind: 'screenshot' };
+  else if (cmd === 'network') {
+    // A bare number (with or without '#') is a detail lookup by #id.
+    const arg = (argv[1] || '').replace(/^#/, '');
+    action = /^\\d+$/.test(arg)
+      ? { id, kind: 'network', seq: Number(arg) }
+      : { id, kind: 'network', filter: argv[1] };
+  }
   else if (cmd === 'navigate') action = { id, kind: 'navigate', url: argv[1] };
   else if (cmd === 'back') action = { id, kind: 'back' };
   else if (cmd === 'click') action = { id, kind: 'click', ref: argv[1] };
+  else if (cmd === 'select') action = { id, kind: 'select', ref: argv[1], option: argv.slice(2).join(' ') };
   else if (cmd === 'key') action = { id, kind: 'key', key: argv[1] };
   else if (cmd === 'scroll') action = { id, kind: 'scroll', dy: Number(argv[1]) };
   else if (cmd === 'type') {
@@ -248,6 +274,17 @@ while (Date.now() < deadline) {
     try { rmSync(req); rmSync(res); } catch {}
     if (result && result.ok) {
       const data = result.data;
+      // Screenshots ride the mailbox as base64; land them as a real image
+      // file so the agent can open it with its image-reading tool.
+      if (data && typeof data === 'object' && typeof data.screenshotBase64 === 'string') {
+        const shot = DIR + '/shot-' + Date.now() + '.jpg';
+        writeFileSync(shot, Buffer.from(data.screenshotBase64, 'base64'));
+        process.stdout.write(
+          'Screenshot of the active tab saved to ' + shot + '\\n' +
+          'Open/read that image file to actually look at the page.\\n',
+        );
+        process.exit(0);
+      }
       process.stdout.write(
         typeof data === 'string' ? data : JSON.stringify(data ?? { ok: true }, null, 2),
       );
@@ -270,13 +307,27 @@ Some tasks happen IN the user's tab rather than in a write-up: filling a form, c
 
 The one time NOT to use it: a plain question about the page the user is already on ("what does this say?", "summarize this article"). The page HTML snapshot in the envelope already answers that — don't drive the cursor just to look at the current page.
 
+## Prefer the browser over your own tools
+
+Your harness has web-search and fetch tools, and the sandbox has \`curl\`. For anything on the web, use the user's browser instead: navigate, read, click, screenshot, and sniff traffic through \`browser\` commands. Three reasons:
+
+1. The tab carries the user's real sessions — logged-in pages, personalized content, paywalled things a sandbox request will never see.
+2. It renders JavaScript like a real visitor and doesn't trip the bot detection that blocks datacenter requests.
+3. The user watches the cursor do the work. Visible effort they can follow is half the product; invisible fetching looks like nothing happened.
+
+Reach for curl or built-in search only when a browser tab genuinely can't do the job (say, processing a large raw file whose URL you already have). If you catch yourself about to web-search or fetch, navigate the tab there instead.
+
 ## The loop
 
 Work against a fresh snapshot, act, then re-snapshot:
 
 1. \`browser snapshot\` — prints the current URL and title, then the interactive elements on the active tab, each with a stable \`ref\` (like \`e12\`), its role, accessible name, and current value. This is your map of the page.
-2. Act on refs from the LATEST snapshot: \`browser click e12\`, \`browser type e5 jane@example.com\`.
+2. Act on refs from the LATEST snapshot: \`browser click e12\`, \`browser type e5 jane@example.com\`, \`browser select e8 California\`.
 3. Anything changed the page — a click that navigated, a new field, an opened menu, a \`navigate\`? Take a new \`browser snapshot\`. Refs are only valid until the next snapshot; never reuse one from an older snapshot.
+
+## Seeing the page
+
+\`browser screenshot\` captures the tab's viewport to a JPEG file and prints its path — open that file with your image-reading tool to literally look at the page. Use it when structure isn't enough: a layout or visual question ("does this look broken?"), a chart or image you need to read, a page that seems to be rendering oddly, or to verify the result of your actions actually looks right before you report done. The snapshot ref map plus \`read\` stays the primary loop for acting; the screenshot is your eyes when they matter.
 
 ## Exploring a site
 
@@ -287,8 +338,9 @@ To explore or map a site: navigate (or click a link), \`browser read\` to take i
 The debugger sees the page's network traffic, which is often the shortest path to understanding — and then extending — a site. When a request is "build me a button that does X" or "show me Y inline", investigate first, then author a page extension (see the page-extension skill) that talks to the same API:
 
 1. Load or interact with the page so it makes its real requests (\`browser navigate\`, or \`browser click\` the thing that triggers the call).
-2. \`browser network\` — read the XHR/fetch calls: the endpoint URLs, methods, what the request bodies carry, and what the responses look like. Filter to the interesting one (\`browser network graphql\`).
-3. Now you know the contract. Author an extension whose script calls that endpoint with \`page.fetch(url, options)\` (it runs in the background with the extension's host permissions, so cross-origin and the site's own cookies both work) and renders the result — a button that fires the call, a panel of live data, an inline field the page was missing.
+2. \`browser network\` — the captured XHR/fetch calls, one per line with a \`#id\`, method, status, URL, and body previews. Filter by URL substring (\`browser network graphql\`) to find the interesting one.
+3. \`browser network <#id>\` — that one call in full: request and response headers plus the complete stored bodies. This is where you learn the exact shape: auth headers, content types, pagination params, the response JSON's structure.
+4. Now you know the contract. Author an extension whose script calls that endpoint with \`page.fetch(url, options)\` (it runs in the background with the extension's host permissions, so cross-origin and the site's own cookies both work) and renders the result — a button that fires the call, a panel of live data, an inline field the page was missing.
 
 So the pattern is: drive the browser to LEARN (network + read), then produce an \`extension\` outcome to BUILD. The investigation is throwaway; the extension is the deliverable.
 
@@ -297,12 +349,15 @@ So the pattern is: drive the browser to LEARN (network + read), then produce an 
 - \`browser tabs\` — list the user's open tabs (id, title, url). The cursor acts on the active one.
 - \`browser snapshot\` — current URL/title + the ref map of the active tab. Start here and re-run after every change.
 - \`browser read\` — the visible text of the active tab, for taking in a page's content while exploring or verifying a change.
-- \`browser network [filter]\` — the tab's recent network traffic, captured live by the debugger: each XHR/fetch call's method, status, URL, and request/response body preview. This is how you discover the API a page actually speaks. Pass a URL substring to filter (\`browser network api/search\`); pass \`all\` to include non-XHR requests too.
+- \`browser screenshot\` — capture the viewport to a JPEG file and print its path; open the file to SEE the page (layout, images, charts, visual verification).
+- \`browser network [filter]\` — the tab's recent network traffic, captured live by the debugger: each XHR/fetch call's \`#id\`, method, status, URL, and body previews. This is how you discover the API a page actually speaks. Pass a URL substring to filter (\`browser network api/search\`); pass \`all\` to include non-XHR requests too.
+- \`browser network <#id>\` — one captured call in full: request/response headers and the complete stored bodies.
 - \`browser navigate <url>\` — load a URL in the active tab.
 - \`browser back\` — go back one page in history.
 - \`browser click <ref>\` — move the cursor to that element and click it (this is how you follow links too).
 - \`browser type <ref> <text>\` — focus that field and type. Add \`--submit\` before the ref to press Enter after (\`browser type --submit e5 hello\`).
-- \`browser key <Key>\` — press a single key: \`Enter\`, \`Tab\`, \`Escape\`, \`ArrowDown\`, etc.
+- \`browser select <ref> <option>\` — pick a \`<select>\` dropdown's option by its visible text (native dropdowns can't be clicked open; this sets the value and fires the page's change handlers). On a miss it lists the available options.
+- \`browser key <Key|Combo>\` — press a key or combo: \`Enter\`, \`Tab\`, \`Escape\`, \`ArrowDown\`, \`Home\`, \`End\`, \`PageDown\`, single characters, or modifier combos like \`Ctrl+A\`, \`Shift+Tab\`, \`Meta+Enter\` (modifiers: Ctrl, Alt, Shift, Meta/Cmd).
 - \`browser scroll <dy>\` — scroll by dy pixels (negative scrolls up) to bring elements into view.
 
 ## Rules

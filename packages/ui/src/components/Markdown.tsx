@@ -82,9 +82,6 @@ export function Markdown({
   );
 }
 
-/** Back-compat alias from the hand-rolled days; prefer `Markdown`. */
-export const MarkdownLite = Markdown;
-
 /* The wrapper's flex gap spaces the top-level blocks, so these renderers
    carry no vertical margins of their own — nested spacing (lists in lists,
    paragraphs in list items) is handled inline where it occurs. */

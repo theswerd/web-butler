@@ -33,6 +33,9 @@ function App() {
 
     const onMessage = (message: WebButlerMessage) => {
       if (message?.type === MESSAGE.PANEL_CHANGED) setState(message.state);
+      // Liveness probe: the background only takes its new-tab fallback when
+      // no panel answers (forks like Vivaldi hide us from getContexts).
+      if (message?.type === MESSAGE.PANEL_PING) return Promise.resolve(true);
     };
     browser.runtime.onMessage.addListener(onMessage);
     return () => {

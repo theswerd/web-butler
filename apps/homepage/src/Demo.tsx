@@ -239,6 +239,7 @@ export function Demo() {
       y: from.top + from.height * 0.55,
       visible: true,
       pressCount: 0,
+      flashCount: 0,
     });
     later(140, () =>
       setCursor((c) => ({
@@ -273,6 +274,7 @@ export function Demo() {
       y: from.top + 44,
       visible: true,
       pressCount: 0,
+      flashCount: 0,
     });
 
     const visit = (
