@@ -888,18 +888,27 @@ main {
 .agent-chip {
   display: inline-flex;
   align-items: center;
-  padding: 4px 12px;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
   border: 1px solid var(--hairline);
   border-radius: 999px;
-  font-size: 12.5px;
-  font-weight: 500;
   color: var(--text-2);
   text-decoration: none;
   transition: border-color 140ms, color 140ms;
 }
+.agent-chip svg {
+  width: 16px;
+  height: 16px;
+}
 .agent-chip:hover {
   border-color: var(--ink);
   color: var(--ink);
+}
+/* Claude Code hovers in its own terracotta. */
+.agent-chip-claude:hover {
+  border-color: #d97757;
+  color: #d97757;
 }
 .install-actions {
   display: flex;

@@ -57,11 +57,42 @@ which only works when Chrome is launched with BOTH of these flags:
 Chrome must be fully quit first; if a Chrome process is already running,
 a new launch just forwards to it and the flags are ignored.
 
+#### A.0: pick the right profile
+
+Extensions install per Chrome profile. If the user has more than one
+profile and you install into the wrong one, everything below "succeeds"
+and yet the user sees nothing. Before launching, read Chrome's
+`Local State` file (plain JSON, safe to read, never write to it) to list
+profiles and find the one the user actually uses:
+
+```bash
+node -e '
+const home = process.env.HOME;
+const p = process.platform === "darwin"
+  ? home + "/Library/Application Support/Google/Chrome/Local State"
+  : home + "/.config/google-chrome/Local State";
+const s = JSON.parse(require("fs").readFileSync(p, "utf8"));
+for (const [dir, m] of Object.entries(s.profile.info_cache))
+  console.log(dir + "\t" + m.name);
+console.log("last used:\t" + (s.profile.last_used || "Default"));
+'
+```
+
+The left column ("Default", "Profile 1", ...) is the directory name the
+flag below needs; the right column is the human name shown in Chrome's
+profile picker. Install into the **last used** profile. If the output
+shows several profiles with real-looking names, install into each of
+them by running the recipe once per directory name; the extension id is
+derived from the path, so it is identical in every profile.
+
+#### A.1: launch and load
+
 The pipe speaks JSON messages terminated by `\0` on file descriptors
 3 (in) and 4 (out). Complete recipe (macOS and Linux):
 
 ```bash
 EXT="/absolute/path/to/web-butler/apps/extension/.output/chrome-mv3"
+PROFILE="Default"   # directory name from step A.0, not the display name
 
 # Quit any running Chrome cleanly; it restores tabs on relaunch.
 osascript -e 'quit app "Google Chrome"' 2>/dev/null   # Linux: pkill -x chrome
@@ -74,7 +105,11 @@ const chrome = process.platform === 'darwin'
   : 'google-chrome';
 const child = spawn(
   chrome,
-  ['--remote-debugging-pipe', '--enable-unsafe-extension-debugging'],
+  [
+    '--remote-debugging-pipe',
+    '--enable-unsafe-extension-debugging',
+    '--profile-directory=${PROFILE}',
+  ],
   { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] },
 );
 child.stdio[3].write(JSON.stringify({
@@ -105,10 +140,14 @@ Route B; do not improvise other mechanisms.
 
 Notes:
 
-- This uses the user's default profile, so the extension is installed for
-  their real browsing, not a throwaway session.
+- The `--profile-directory` flag pins the install to a specific profile
+  of the user's real browsing data, not a throwaway session. Repeat the
+  recipe (quit Chrome, relaunch with the next directory name) for every
+  profile the user works in.
 - Windows: the pipe uses POSIX file descriptors; run the recipe under
-  WSL, or use Route B.
+  WSL, or use Route B. (Chrome's data lives at
+  `%LOCALAPPDATA%\Google\Chrome\User Data`; `Local State` sits at its
+  root, same format.)
 - Chromium, Chrome for Testing, and most non-Google Chromium browsers
   (e.g. Vivaldi) still support the old `--load-extension="$EXT"` flag,
   but it is session-scoped: it does not persist. Prefer this route or
@@ -116,12 +155,16 @@ Notes:
 
 ### Route B: by hand (fallback only)
 
-1. Open `chrome://extensions`.
-2. Turn on "Developer mode" (top right).
-3. Click "Load unpacked" and select
+1. Switch to the profile the user actually browses in (avatar button,
+   top right of Chrome). Loading unpacked only affects the current
+   profile.
+2. Open `chrome://extensions`.
+3. Turn on "Developer mode" (top right).
+4. Click "Load unpacked" and select
    `apps/extension/.output/chrome-mv3`.
 
-This persists across restarts like any developer-mode extension.
+This persists across restarts like any developer-mode extension. Repeat
+in each additional profile the user works in.
 
 ### Dead ends: do not attempt these
 
@@ -139,6 +182,10 @@ Agents keep inventing these; none of them work on current Chrome.
   ignored since Chrome 137. Even where it works it is session-only.
 - Do not launch with a temporary `--user-data-dir`: the extension would
   install into a throwaway profile instead of the user's real one.
+- Do not "copy the install" into other profiles by duplicating files
+  under `Profile N/Extensions/` or editing their `Preferences`. Same
+  HMAC problem as above. To cover another profile, rerun Route A with
+  that profile's `--profile-directory`.
 
 ## 3. Enable "Allow User Scripts"
 
@@ -146,12 +193,14 @@ Web Butler's persistent page alterations use Chrome's `userScripts` API,
 which is gated behind a per-extension toggle (Chrome 138+): open
 `chrome://extensions/?id=<extension-id>` and turn on **Allow User
 Scripts**. Without it the extension still works, but installed page
-alterations will not run.
+alterations will not run. The toggle is per profile: flip it in every
+profile you installed into.
 
-Do this yourself too. `chrome://extensions` is a normal page; with
-Chrome launched with `--remote-debugging-port=9222` an agent can attach
-to the `chrome://extensions/?id=<id>` target and click the toggle
-through the shadow DOM:
+Do this yourself too. `chrome://extensions` is a normal page; launch
+Chrome with `--remote-debugging-port=9222 --profile-directory=<dir>`
+(same directory name as the install), attach to the
+`chrome://extensions/?id=<id>` target, and click the toggle through the
+shadow DOM:
 
 ```js
 const view = document.querySelector('extensions-manager').shadowRoot
@@ -171,7 +220,10 @@ for restarts.
 
 ## 4. Verify, then hand off for sign-in
 
-Success criteria, in order. Check each one and report the result:
+Success criteria, in order. Check each one and report the result. All
+checks happen **in the profile the user actually uses** (and in each
+profile, if you installed into several); a pass in the wrong profile
+proves nothing:
 
 1. `chrome://extensions` lists "Web Butler", enabled, with no error
    badge, after a normal (flag-free) Chrome relaunch.
@@ -184,6 +236,13 @@ Success criteria, in order. Check each one and report the result:
 5. After connecting, asking something about the page returns an answer.
 
 ## FAQ for agents
+
+**The install "succeeded" but the user sees no extension?** Almost
+always a profile mismatch: the extension went into one Chrome profile
+and the user browses in another. Rerun step A.0 to list profiles, then
+rerun the Route A recipe with the right `--profile-directory`. Also
+confirm Chrome was fully quit before the flagged launch; if a Chrome
+process was already running, the flags were silently ignored.
 
 **Can this be installed with no browser process at all?** Not on consumer
 Chrome, by design. The CLI flag was removed in Chrome 137, Chrome's
