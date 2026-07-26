@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy Policy · Web Butler</title>
+  <meta name="description" content="The Web Butler privacy policy: what the extension collects, where it goes, how long it stays, and how to delete it." />
+  <link rel="canonical" href="https://butler.swerdlow.dev/privacy" />
+  <meta name="robots" content="index,follow" />
+  <meta name="theme-color" content="#ffffff" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23171717' d='M3 8.2 H9.6 L11.6 12 L9.6 15.8 H3 L5.2 12 Z'/%3E%3Cpath fill='%23171717' d='M21 8.2 H14.4 L12.4 12 L14.4 15.8 H21 L18.8 12 Z'/%3E%3Crect fill='%23a3a3a3' x='10.7' y='9.8' width='2.6' height='4.4' rx='0.5'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #171717;
+      --ink-2: #525252;
+      --ink-3: #a3a3a3;
+      --paper: #ffffff;
+      --line: #e5e5e5;
+      --serif: "IBM Plex Serif", Georgia, serif;
+      --sans: "IBM Plex Sans", -apple-system, sans-serif;
+      --mono: "IBM Plex Mono", ui-monospace, monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 15px;
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+    }
+    .top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 22px 24px 0;
+    }
+    .wordmark {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--ink);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 14px;
+      letter-spacing: -0.01em;
+    }
+    .wordmark svg { width: 20px; height: 20px; }
+    .bt-wing { fill: var(--ink); }
+    .bt-knot { fill: var(--ink-3); }
+    .top a.back {
+      color: var(--ink-2);
+      font-size: 13px;
+      text-decoration: none;
+    }
+    .top a.back:hover { text-decoration: underline; }
+    main {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+    .kicker {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      margin: 0 0 10px;
+    }
+    h1 {
+      font-family: var(--serif);
+      font-weight: 500;
+      font-size: 34px;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      margin: 0 0 6px;
+    }
+    .dateline {
+      color: var(--ink-3);
+      font-size: 13px;
+      margin: 0 0 36px;
+    }
+    h2 {
+      font-family: var(--serif);
+      font-weight: 500;
+      font-size: 21px;
+      letter-spacing: -0.01em;
+      margin: 44px 0 10px;
+    }
+    h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin: 26px 0 6px;
+    }
+    p { margin: 0 0 14px; color: var(--ink-2); }
+    li { color: var(--ink-2); margin-bottom: 6px; }
+    ul { padding-left: 22px; margin: 0 0 14px; }
+    strong { color: var(--ink); font-weight: 600; }
+    a { color: var(--ink); }
+    code {
+      font-family: var(--mono);
+      font-size: 0.9em;
+      background: #f5f5f5;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+    .summary {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 18px 20px;
+      margin: 0 0 8px;
+      background: #fafafa;
+    }
+    .summary p:last-child { margin-bottom: 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13.5px;
+      margin: 0 0 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      color: var(--ink-2);
+    }
+    th {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      font-weight: 500;
+    }
+    td:first-child { white-space: nowrap; font-weight: 500; color: var(--ink); }
+    footer {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 0 24px 48px;
+      color: var(--ink-3);
+      font-size: 13px;
+    }
+    footer a { color: var(--ink-2); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+  <header class="top">
+    <a class="wordmark" href="/" aria-label="Web Butler home">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path class="bt-wing" d="M3 8.2 H9.6 L11.6 12 L9.6 15.8 H3 L5.2 12 Z" />
+        <path class="bt-wing" d="M21 8.2 H14.4 L12.4 12 L14.4 15.8 H21 L18.8 12 Z" />
+        <rect class="bt-knot" x="10.7" y="9.8" width="2.6" height="4.4" rx="0.5" />
+      </svg>
+      <span>Web Butler</span>
+    </a>
+    <a class="back" href="/">Back to home</a>
+  </header>
+
+  <main>
+    <p class="kicker">Legal</p>
+    <h1>Privacy Policy</h1>
+    <p class="dateline">Effective July 25, 2026 · applies to the Web Butler browser extension and butler.swerdlow.dev</p>
+
+    <div class="summary">
+      <p><strong>The short version.</strong> Web Butler sends the pages you ask about, and the questions you ask, to the AI provider you signed in with (ChatGPT, Claude, or Grok). Your tasks, reports, and page alterations are stored in our database so they work across sessions. Data is stored under a random anonymous ID, not your name or email, but it is not otherwise anonymized. We do not sell your data, we do not run ads, and we do not track your browsing when you are not using the butler. You can wipe everything from Settings at any time.</p>
+    </div>
+
+    <h2>1. Who we are</h2>
+    <p>Web Butler is an open source browser extension built and operated by Ben Swerdlow. The full source code, including the server, is public at <a href="https://github.com/theswerd/web-butler">github.com/theswerd/web-butler</a>, so everything described in this policy can be verified by reading the code. The extension talks to a service hosted at butler.swerdlow.dev.</p>
+    <p>This is an independent side project, not a company with a legal department. This policy is written in plain language and describes what actually happens, as accurately as possible.</p>
+
+    <h2>2. What Web Butler does</h2>
+    <p>Web Butler is an in-page assistant. You summon it on a page, type a request, and it uses the AI subscription you already have (ChatGPT, Claude, or Grok) to answer questions about that page, run errands in your tab, write long-form reports, and apply persistent page alterations you asked for. Every one of those features involves handling some of your data. This policy explains which data, where it goes, and how long it stays.</p>
+
+    <h2>3. What we collect</h2>
+    <p>Web Butler only handles data when you actively use it. Here is the complete list.</p>
+
+    <h3>3.1 Your prompts and tasks</h3>
+    <p>Every request you type into the prompt box is sent to our server and stored in our database as part of a task record. A task record includes the prompt text, the URL and title of the page you asked about, the activity feed of what the agent did, the outcome, and timestamps. Task history exists so you can review past work, retry failed tasks, and reference earlier tasks in follow-up requests.</p>
+
+    <h3>3.2 Page content</h3>
+    <p>When you send a request, a snapshot of the current page is included as context: the page URL, the title, a trimmed copy of the page HTML, and any elements you explicitly selected with the element picker. This is what lets the AI actually answer questions about the page in front of you. Page content is forwarded to your chosen AI provider and passes through the sandbox that runs your agent. It is not collected in the background; it is captured only for pages where you invoke the butler, at the moment you send a request.</p>
+
+    <h3>3.3 Browser errands</h3>
+    <p>When you ask the butler to do something in your tab, like filling a form or clicking through a flow, the agent drives the page through Chrome's debugger API behind a visible on-page cursor. During such a task the agent can take screenshots of the tab, read the page, and inspect the tab's network requests when the task requires it. That material is used as working context for the task and can appear in the task's stored activity feed. This only happens inside a task you started, and detaches when the task ends.</p>
+
+    <h3>3.4 Reports and artifacts</h3>
+    <p>Long-form outputs the agent produces, such as reports, tables, and drafts, are stored in our database so they survive reloads and can be reopened later from the Artifacts view.</p>
+
+    <h3>3.5 Page alterations</h3>
+    <p>Persistent page alterations you request, like hiding sponsored posts on a site, are stored in our database with a name, description, the script itself, and the URL patterns they apply to. They are also registered locally in your browser through Chrome's user scripts API so they run on later visits.</p>
+
+    <h3>3.6 Account and settings</h3>
+    <p>Web Butler uses anonymous accounts. When the extension first connects, our server issues a random identifier and a session token. There is no email, no name, no password, and no sign-up form. Everything we store is keyed to that random ID. Your provider choice and a small amount of state are stored alongside it. Purely cosmetic settings, like theme and accent color, stay in your browser's local extension storage.</p>
+
+    <h3>3.7 Provider credentials</h3>
+    <p>Signing in to ChatGPT, Claude, or Grok happens through each provider's own device authorization flow. The resulting credentials are stored inside your personal sandbox virtual machine, not in our database. We never see or store your provider password.</p>
+
+    <h3>3.8 Server logs</h3>
+    <p>Like almost every web service, our infrastructure providers produce operational logs (request paths, status codes, timestamps, IP addresses as part of standard HTTP handling). We use them for debugging and abuse prevention, not for profiling.</p>
+
+    <h2>4. What we do not collect</h2>
+    <ul>
+      <li><strong>No browsing history.</strong> The extension does not watch, record, or report the pages you visit. It only sees a page when you summon the butler on it and send a request.</li>
+      <li><strong>No keystroke logging.</strong> Nothing you type outside the Web Butler prompt box is captured.</li>
+      <li><strong>No identity.</strong> We do not ask for or store your name, email address, or any account profile.</li>
+      <li><strong>No advertising or analytics trackers.</strong> The extension and the homepage contain no ad networks and no third-party analytics.</li>
+      <li><strong>No selling of data.</strong> We do not sell, rent, or trade your data with anyone, full stop.</li>
+    </ul>
+
+    <h2>5. Where your data goes</h2>
+    <p>When you send a request, your data moves through a short, fixed chain. Each hop exists to make the product work, and nothing else is in the loop:</p>
+    <table>
+      <tr><th>Hop</th><th>What it is</th><th>What it handles</th></tr>
+      <tr><td>Cloudflare</td><td>Hosts our API and this website</td><td>All requests between the extension and our service</td></tr>
+      <tr><td>Neon Postgres</td><td>Our database</td><td>Tasks, reports, alterations, anonymous account records</td></tr>
+      <tr><td>Freestyle</td><td>Runs your personal sandbox VM</td><td>Executes your agent; holds your provider credentials and per-task working files</td></tr>
+      <tr><td>Your AI provider</td><td>OpenAI, Anthropic, or xAI, whichever you signed in with</td><td>Receives your prompts and page context to produce answers</td></tr>
+    </table>
+    <p>The most important hop is the last one. Your prompts and the page content you ask about are processed by the AI provider you connected, under <em>their</em> terms and privacy policy, on the subscription you already have with them. Web Butler does not add any AI provider you did not choose.</p>
+
+    <h2>6. How we use your data</h2>
+    <p>We use the data described above for exactly one purpose: making Web Butler work for you. Concretely, that means running your tasks, keeping your history and artifacts available across sessions, reapplying your page alterations, and debugging when something breaks. We do not use your data to build advertising profiles, we do not sell or share it for marketing, and we do not use it to make decisions about you.</p>
+    <p>Because the project is open source and the operator can access the database, treat Web Butler like any small hosted service: do not run tasks over content you would not be comfortable existing in a database row. Stored data is keyed to a random ID rather than your identity, but the content itself, such as prompts and page snapshots, is stored as-is and is not further anonymized.</p>
+
+    <h2>7. Data retention and deletion</h2>
+    <p>Stored data stays until you delete it. There is currently no automatic expiry. You are in control of deletion at several levels:</p>
+    <ul>
+      <li><strong>Individual tasks</strong> can be deleted from the Tasks view, and there are bulk options to clear old tasks or all tasks.</li>
+      <li><strong>Page alterations</strong> can be switched off or deleted from the Extensions view, which also unregisters them from your browser.</li>
+      <li><strong>Full reset.</strong> Settings includes a reset that clears the extension's local state and returns it to first-run. Because accounts are anonymous, a reset effectively orphans the server-side data tied to your old ID; nothing links it back to you or your new session.</li>
+      <li><strong>Complete server-side deletion</strong> of an orphaned account's data can be requested through the contact channel below.</li>
+    </ul>
+    <p>Uninstalling the extension removes all locally stored data and registered user scripts from your browser.</p>
+
+    <h2>8. Chrome permissions, explained</h2>
+    <p>The extension asks for several Chrome permissions. Each one maps to a visible feature:</p>
+    <table>
+      <tr><th>Permission</th><th>Why</th></tr>
+      <tr><td>Host access</td><td>The butler is an overlay you can summon on any site, so it cannot list hosts in advance. It only touches pages where you invoke it.</td></tr>
+      <tr><td>storage</td><td>Settings, session token, and local task state.</td></tr>
+      <tr><td>sidePanel</td><td>Reports and live task activity open in the side panel.</td></tr>
+      <tr><td>userScripts</td><td>Runs the page alterations you asked for on the sites you chose.</td></tr>
+      <tr><td>tabs</td><td>Applies alterations to matching open tabs and routes results back to the right tab.</td></tr>
+      <tr><td>debugger</td><td>Drives browser errands with the visible cursor; attached only during a task you started.</td></tr>
+      <tr><td>notifications</td><td>One notification when a task finishes while the panel is closed.</td></tr>
+      <tr><td>scripting</td><td>Injects the assistant into tabs that were already open when the extension installed or updated.</td></tr>
+      <tr><td>contextMenus</td><td>The right-click "Ask Web Butler" shortcut for selected text.</td></tr>
+      <tr><td>alarms</td><td>Wakes the extension to re-attach to a still-running task if Chrome suspends it.</td></tr>
+    </table>
+
+    <h2>9. Security</h2>
+    <p>All traffic between the extension, our server, and the sandbox uses HTTPS. Each user's agent runs in its own isolated virtual machine, and API routes enforce that you can only read and manage your own tasks, reports, and alterations. Provider credentials live in your sandbox rather than the shared database.</p>
+    <p>Honesty section: this is a small open source project. It has not undergone a formal third-party security audit. The code is public precisely so anyone can inspect how data is handled, and security reports are very welcome through GitHub.</p>
+
+    <h2>10. Cookies and local storage</h2>
+    <p>The extension stores its session token and settings in Chrome's extension storage, which is not readable by websites. The butler.swerdlow.dev homepage sets no cookies and runs no analytics. Your AI provider's own pages, used during sign-in, are governed by their own cookie policies.</p>
+
+    <h2>11. Children</h2>
+    <p>Web Butler is not directed at children under 13, and we do not knowingly collect data from them. Since accounts are anonymous we have no way to verify age; if you believe a child has used the service and want associated data removed, contact us below.</p>
+
+    <h2>12. Your rights</h2>
+    <p>Depending on where you live, you may have legal rights to access, correct, export, or delete your data. Because accounts are anonymous, the practical route for all of these is the same: use the in-product deletion controls described in section 7, or contact us with enough detail to locate the data in question. We will honor any reasonable request; there is no data we have an interest in keeping against your wishes.</p>
+
+    <h2>13. Changes to this policy</h2>
+    <p>If the way Web Butler handles data changes, this page will be updated and the effective date at the top will move. Meaningful changes will also be visible in the project's public commit history, which is a level of transparency most privacy policies cannot offer.</p>
+
+    <h2>14. Contact</h2>
+    <p>Questions, deletion requests, or security reports: open an issue at <a href="https://github.com/theswerd/web-butler/issues">github.com/theswerd/web-butler/issues</a> or reach the author at <a href="https://x.com/benswerd">@benswerd</a>.</p>
+  </main>
+
+  <footer>
+    <a href="/">Web Butler</a> · <a href="https://github.com/theswerd/web-butler">GitHub</a> · <a href="/privacy">Privacy</a>
+  </footer>
+
+</body>
+</html>

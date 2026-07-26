@@ -72,6 +72,23 @@ export const hotkeyRecording: {
   onCombo: ((combo: string) => void) | null;
 } = { active: false, onCombo: null };
 
+/**
+ * In-shell claims on a bare Escape press. The shell owns Esc while it's
+ * open (the content script absorbs it before the page can react), so
+ * components with local Esc semantics — the menu's search field clearing
+ * its text — can't rely on receiving the keydown themselves. They register
+ * a claim instead; the shell's Esc owner runs the claims before its own
+ * close-priority flow. A claim returns true when it consumed the press.
+ */
+export const escapeClaims = new Set<() => boolean>();
+
+export function consumeEscapeClaim(): boolean {
+  for (const claim of escapeClaims) {
+    if (claim()) return true;
+  }
+  return false;
+}
+
 /** The combo Chrome has bound to our toggle command on this platform. */
 export const COMMAND_COMBO = /mac/i.test(navigator.platform)
   ? 'meta+e'

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "name": "web-butler-api",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-07-01",
+  // nodejs_compat: node builtins for the freestyle SDK / better-auth, and
+  // env bindings surfaced through process.env (which db/auth read lazily).
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  // The first (abandoned) deploy of this Worker was the Containers
+  // architecture, which registered a Durable Object class. Delete it.
+  "migrations": [{ "tag": "v2", "deleted_classes": ["WebButlerApi"] }],
+  // Free tier: no containers, no durable objects. All state is in Neon
+  // (turns, actions, tasks, reports, extensions) or on the user's
+  // Freestyle VM (agent processes, managed by the daemon).
+  // Secrets (set with `wrangler secret put`):
+  //   DATABASE_URL, BETTER_AUTH_SECRET, FREESTYLE_API_KEY
+  // Vars that aren't secret can live here:
+  "vars": {
+    "BETTER_AUTH_URL": "https://web-butler-api.swerdlowbenjamin.workers.dev"
+  }
+}

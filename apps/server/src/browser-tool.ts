@@ -4,26 +4,26 @@
  * composing an email in place.
  *
  * The hard constraint is the topology: the agent runs on a sandbox VM that
- * cannot reach the user's machine, and the only live channel we have is the
- * NDJSON response stream of the in-flight `/api/agent/prompt` request
- * (server → extension). So the loop is a file mailbox on the VM:
+ * cannot reach the user's machine. The loop is a file mailbox on the VM,
+ * relayed through the database:
  *
- *   1. The agent runs the `browser` CLI (written to the VM by acp.ts). It
- *      writes a request JSON into ACTIONS_DIR and blocks on a response file.
- *   2. While the prompt turn runs, the route polls ACTIONS_DIR (drainActions),
- *      relays each new request to the extension as an `{action}` stream line,
- *      and parks a resolver here keyed by the action id.
- *   3. The extension performs it with chrome.debugger + the ghost cursor and
- *      POSTs the result to /api/agent/action-result, which resolves the
- *      parked promise.
- *   4. drainActions writes the response file; the CLI unblocks and prints it.
+ *   1. The agent runs the `browser` CLI (shipped to the VM as a daemon
+ *      asset). It writes a request JSON into ACTIONS_DIR and blocks on a
+ *      response file.
+ *   2. The VM daemon watches ACTIONS_DIR and relays each new request to
+ *      the server on its next sync; the server stores it as a
+ *      browser_action row.
+ *   3. The extension sees the pending row on its next turn poll, performs
+ *      it with chrome.debugger + the ghost cursor, and POSTs the result to
+ *      /api/agent/action-result, which stores it on the row.
+ *   4. The daemon collects the result on a later sync and writes the
+ *      response file; the CLI unblocks and prints it.
  *
- * This module owns the VM-side artifacts (CLI source, skill), the wire
- * schema, and the in-memory request registry the two routes share.
+ * This module owns the VM-side artifacts (CLI source, skill) and the wire
+ * schema.
  */
 
 import { z } from 'zod';
-import { getFreestyle } from './freestyle';
 import { WORKSPACE_DIR } from './vm-paths';
 
 /** Root of the action mailboxes. Each task's agent process gets its own
@@ -80,109 +80,6 @@ export type BrowserAction = z.infer<typeof browserActionSchema>;
 export type BrowserActionResult =
   | { ok: true; data?: unknown }
   | { ok: false; error: string };
-
-// ---------------------------------------------------------------------------
-// Request registry: shared by the stream route (parks a resolver, awaits the
-// extension) and the action-result route (resolves it). Ids are uuids from
-// the CLI, so cross-user collision isn't a concern on a single dev server.
-// ---------------------------------------------------------------------------
-
-const pending = new Map<string, (result: BrowserActionResult) => void>();
-
-/** Park a resolver for `id`; the action-result route fulfills it. Rejects
-    with a timeout result if the extension never answers. */
-export function awaitBrowserAction(
-  id: string,
-  timeoutMs: number,
-): Promise<BrowserActionResult> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      pending.delete(id);
-      resolve({ ok: false, error: 'the browser action timed out' });
-    }, timeoutMs);
-    pending.set(id, (result) => {
-      clearTimeout(timer);
-      pending.delete(id);
-      resolve(result);
-    });
-  });
-}
-
-/** Fulfil a parked action (called by /api/agent/action-result). */
-export function resolveBrowserAction(
-  id: string,
-  result: BrowserActionResult,
-): boolean {
-  const resolve = pending.get(id);
-  if (!resolve) return false;
-  resolve(result);
-  return true;
-}
-
-// ---------------------------------------------------------------------------
-// Draining the VM mailbox during a turn.
-// ---------------------------------------------------------------------------
-
-/** Delimiter between request blocks in the batched cat (see drainActions).
-    Plain ASCII on purpose: a NUL byte here corrupts the command sent to the
-    VM, and this token won't appear inside a JSON action body. */
-const SEP = '<<<WBSEP>>>';
-
-/**
- * One poll of a task's action mailbox: for every request file without a
- * response and not already handled this turn, relay it via `onAction` and
- * write the response file that unblocks the CLI. Sequential by design —
- * the CLI only ever has one action outstanding, and pacing the ghost
- * cursor is slow.
- */
-export async function drainActions(
-  vmId: string,
-  actionsDir: string,
-  handled: Set<string>,
-  onAction: (action: BrowserAction) => Promise<BrowserActionResult>,
-): Promise<void> {
-  const vm = getFreestyle().vms.ref({ vmId });
-  // One shell round-trip lists + cats every unanswered request, id-tagged.
-  const script =
-    `cd ${actionsDir} 2>/dev/null || exit 0; ` +
-    'for f in *.req.json; do ' +
-    '[ -e "$f" ] || continue; id=${f%.req.json}; ' +
-    '[ -e "$id.res.json" ] && continue; ' +
-    `printf '%s' "$id"; printf '${SEP}'; cat "$f"; printf '${SEP}'; ` +
-    'done';
-  const result = await vm.exec({ command: script, timeoutMs: 15_000 });
-  const stdout = result.stdout ?? '';
-  if (!stdout) return;
-
-  const parts = stdout.split(SEP);
-  // parts: [id0, body0, id1, body1, …, ''] — step in pairs.
-  for (let i = 0; i + 1 < parts.length; i += 2) {
-    const id = parts[i].trim();
-    if (!id || handled.has(id)) continue;
-    handled.add(id);
-    let result_: BrowserActionResult;
-    const parsed = browserActionSchema.safeParse(
-      JSON.parse(parts[i + 1] || 'null'),
-    );
-    if (!parsed.success) {
-      result_ = { ok: false, error: 'malformed browser action' };
-    } else {
-      try {
-        result_ = await onAction(parsed.data);
-      } catch (error) {
-        result_ = {
-          ok: false,
-          error: error instanceof Error ? error.message : 'action failed',
-        };
-      }
-    }
-    // Unblock the CLI. Written last so the CLI never reads a partial file.
-    await vm.fs.writeTextFile(
-      `${actionsDir}/${id}.res.json`,
-      JSON.stringify(result_),
-    );
-  }
-}
 
 // ---------------------------------------------------------------------------
 // VM-side artifacts.

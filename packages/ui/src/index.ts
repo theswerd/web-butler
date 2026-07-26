@@ -16,6 +16,7 @@ export * from './fixtures/answers';
 // --- components ---------------------------------------------------------------
 export * from './components/Markdown';
 export * from './components/PromptPanel';
+export * from './components/report/PanelEmptyState';
 export * from './components/report/ReportView';
 export * from './components/report/TaskActivityView';
 export * from './components/prompt-input/PromptInput';

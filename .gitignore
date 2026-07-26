@@ -32,3 +32,7 @@ web-ext.config.ts
 apps/server/.env
 .shots
 chrome-dev
+
+# Agent tooling state
+.agents
+skills-lock.json

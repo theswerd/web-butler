@@ -1,14 +1,48 @@
 import { useEffect, useRef, useState } from 'react';
+import type { IconType } from 'react-icons';
 import {
   HiArrowUpRight,
   HiCheck,
+  HiOutlineArrowsUpDown,
+  HiOutlineCamera,
+  HiOutlineChevronUpDown,
+  HiOutlineCommandLine,
+  HiOutlineCursorArrowRays,
+  HiOutlineDocumentMagnifyingGlass,
   HiOutlineDocumentText,
+  HiOutlineGlobeAlt,
+  HiOutlineMap,
+  HiOutlinePencilSquare,
   HiOutlinePuzzlePiece,
+  HiOutlineRectangleStack,
+  HiOutlineSignal,
   HiOutlineWrenchScrewdriver,
   HiXMark,
 } from 'react-icons/hi2';
 import type { Task, TaskUpdate } from '../../lib/shell';
 import { Markdown } from '../Markdown';
+
+/** The marker color — the user's theme accent, matching the on-page pills.
+    Amber is only the fallback for hosts that never set the variable. */
+const MARKER = 'var(--wc-selection, #f59e0b)';
+const MARKER_EDGE = `color-mix(in srgb, ${MARKER} 45%, transparent)`;
+const MARKER_WASH = `color-mix(in srgb, ${MARKER} 10%, transparent)`;
+
+/** Per-verb icon for 'browser' feed rows, so a glance reads the act. */
+const VERB_ICONS: Record<string, IconType> = {
+  navigate: HiOutlineGlobeAlt,
+  back: HiOutlineGlobeAlt,
+  click: HiOutlineCursorArrowRays,
+  type: HiOutlinePencilSquare,
+  select: HiOutlineChevronUpDown,
+  key: HiOutlineCommandLine,
+  scroll: HiOutlineArrowsUpDown,
+  screenshot: HiOutlineCamera,
+  network: HiOutlineSignal,
+  read: HiOutlineDocumentMagnifyingGlass,
+  snapshot: HiOutlineMap,
+  tabs: HiOutlineRectangleStack,
+};
 
 /**
  * Side-panel surface for one task's live activity: the prompt up top, the
@@ -77,6 +111,64 @@ function StatusBadge({ task }: { task: Task }) {
       <Icon size={11} aria-hidden />
       {label}
     </span>
+  );
+}
+
+/** A settle-time output entry (report/extension): a card that opens the
+    thing where it lives. Renders inert when no opener is wired (the
+    output was deleted, or the panel host can't route there). */
+function OutputCard({
+  spacing,
+  kicker,
+  icon: Icon,
+  title,
+  detail,
+  onOpen,
+}: {
+  spacing: string;
+  kicker: string;
+  icon: IconType;
+  title: string;
+  detail?: string;
+  onOpen?: () => void;
+}) {
+  const Tag = onOpen ? 'button' : 'div';
+  return (
+    <Tag
+      {...(onOpen ? { type: 'button' as const, onClick: onOpen } : {})}
+      className={`webbutler:group webbutler:flex webbutler:w-full webbutler:items-center webbutler:gap-2.5 webbutler:rounded-lg webbutler:border webbutler:border-[var(--wc-border)] webbutler:px-3 webbutler:py-2.5 webbutler:text-left webbutler:transition-[border-color,box-shadow] webbutler:duration-100 ${
+        onOpen
+          ? 'webbutler:cursor-pointer webbutler:hover:border-[var(--wc-border-strong)] webbutler:hover:shadow-[inset_0_0_0_999px_var(--wc-hover-1)]'
+          : ''
+      } ${spacing}`}
+    >
+      <span
+        aria-hidden
+        className="webbutler:flex webbutler:size-7 webbutler:shrink-0 webbutler:items-center webbutler:justify-center webbutler:rounded-md webbutler:bg-[var(--wc-accent)] webbutler:text-[var(--wc-accent-fg)]"
+      >
+        <Icon size={14} />
+      </span>
+      <span className="webbutler:min-w-0 webbutler:flex-1">
+        <span className="webbutler:block webbutler:text-[9px] webbutler:font-medium webbutler:tracking-[0.07em] webbutler:text-[var(--wc-text-4)] webbutler:uppercase">
+          {kicker}
+        </span>
+        <span className="webbutler:block webbutler:truncate webbutler:text-[12px] webbutler:font-semibold webbutler:text-[var(--wc-ink)]">
+          {title}
+        </span>
+        {detail ? (
+          <span className="webbutler:block webbutler:truncate webbutler:text-[11px] webbutler:text-[var(--wc-text-3)]">
+            {detail}
+          </span>
+        ) : null}
+      </span>
+      {onOpen ? (
+        <HiArrowUpRight
+          size={12}
+          aria-hidden
+          className="webbutler:shrink-0 webbutler:text-[var(--wc-text-4)] webbutler:transition-colors webbutler:duration-100 webbutler:group-hover:text-[var(--wc-ink)]"
+        />
+      ) : null}
+    </Tag>
   );
 }
 
@@ -155,14 +247,16 @@ export function TaskActivityView({
 
         <div className="webbutler:flex webbutler:flex-col">
           {updates.map((update, index) => {
-            // Rhythm: runs of tool actions cluster tightly (they're one
-            // burst of work); a change of voice (thought, reply, user
-            // turn) opens a fuller breath of space.
+            // Rhythm: runs of actions cluster tightly (they're one burst
+            // of work); a change of voice (thought, reply, user turn, a
+            // result landing) opens a fuller breath of space.
+            const acts = (kind: TaskUpdate['kind']) =>
+              kind === 'tool' || kind === 'browser';
             const previous = index > 0 ? updates[index - 1].kind : null;
             const spacing =
               previous === null
                 ? ''
-                : update.kind === 'tool' && previous === 'tool'
+                : acts(update.kind) && acts(previous)
                   ? 'webbutler:mt-1.5'
                   : 'webbutler:mt-3';
             return update.kind === 'tool' ? (
@@ -179,6 +273,94 @@ export function TaskActivityView({
                 <span className="webbutler:min-w-0 webbutler:truncate">
                   {update.text}
                 </span>
+              </div>
+            ) : update.kind === 'browser' ? (
+              // A browser-control act — the same line the on-page ghost
+              // cursor announced. A bare verb icon in the accent color is
+              // what sets these apart from generic tool churn.
+              <div
+                key={index}
+                className={`webbutler:flex webbutler:items-center webbutler:gap-1.5 webbutler:text-[11px] webbutler:text-[var(--wc-text-2)] ${spacing}`}
+              >
+                {(() => {
+                  const Icon =
+                    VERB_ICONS[update.verb ?? ''] ?? HiOutlineCursorArrowRays;
+                  return (
+                    <Icon
+                      size={11}
+                      aria-hidden
+                      className="webbutler:shrink-0 webbutler:text-[var(--wc-selection)]"
+                    />
+                  );
+                })()}
+                <span className="webbutler:min-w-0 webbutler:truncate">
+                  {update.text}
+                </span>
+              </div>
+            ) : update.kind === 'answer' ? (
+              // The reply the user saw in the tab, kept with the task.
+              <div
+                key={index}
+                className={`webbutler:rounded-lg webbutler:border webbutler:border-[var(--wc-border-hairline)] webbutler:bg-[var(--wc-hover-1)] webbutler:px-3 webbutler:py-2.5 ${spacing}`}
+              >
+                <p className="webbutler:pb-1.5 webbutler:text-[9px] webbutler:font-medium webbutler:tracking-[0.07em] webbutler:text-[var(--wc-text-4)] webbutler:uppercase">
+                  Answer
+                </p>
+                <Markdown text={update.text} onHighlightLink={onHighlightLink} />
+              </div>
+            ) : update.kind === 'report' || update.kind === 'extension' ? (
+              // A produced thing — one tap opens it where it lives.
+              <OutputCard
+                key={index}
+                spacing={spacing}
+                kicker={update.kind === 'report' ? 'Report' : 'Extension'}
+                icon={
+                  update.kind === 'report'
+                    ? HiOutlineDocumentText
+                    : HiOutlinePuzzlePiece
+                }
+                title={update.text}
+                detail={update.detail}
+                onOpen={
+                  update.kind === 'report' ? onOpenReport : onOpenExtension
+                }
+              />
+            ) : update.kind === 'highlights' ? (
+              // Page markers the agent placed — the chips wear the same
+              // accent as the on-page pills and focus them when clicked.
+              <div key={index} className={spacing}>
+                <p className="webbutler:pb-1.5 webbutler:text-[9px] webbutler:font-medium webbutler:tracking-[0.07em] webbutler:text-[var(--wc-text-4)] webbutler:uppercase">
+                  {update.text}
+                </p>
+                <div className="webbutler:flex webbutler:flex-wrap webbutler:gap-1.5">
+                  {(update.marks ?? []).map((mark) => (
+                    <button
+                      key={mark.id}
+                      type="button"
+                      onClick={
+                        onHighlightLink
+                          ? () => onHighlightLink(mark.id)
+                          : undefined
+                      }
+                      style={{
+                        borderColor: MARKER_EDGE,
+                        backgroundColor: MARKER_WASH,
+                      }}
+                      className={`webbutler:flex webbutler:items-center webbutler:gap-1.5 webbutler:rounded-full webbutler:border webbutler:px-2 webbutler:py-0.5 webbutler:text-[11px] webbutler:font-medium webbutler:text-[var(--wc-ink)] webbutler:transition-colors webbutler:duration-100 ${
+                        onHighlightLink
+                          ? 'webbutler:cursor-pointer webbutler:hover:brightness-110'
+                          : 'webbutler:cursor-default'
+                      }`}
+                    >
+                      <span
+                        aria-hidden
+                        style={{ backgroundColor: MARKER }}
+                        className="webbutler:size-1.5 webbutler:shrink-0 webbutler:rounded-full"
+                      />
+                      {mark.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             ) : update.kind === 'thought' ? (
               // Reasoning reads as an aside: dimmest text behind a
@@ -206,20 +388,28 @@ export function TaskActivityView({
           })}
         </div>
 
-        {/* Settled: the short outcome line, when the reply didn't stream. */}
+        {/* Settled: the short outcome line, when the reply neither
+            streamed nor landed as a structured answer entry. */}
         {task.status !== 'running' &&
         task.outcome &&
-        !updates.some((update) => update.kind === 'message') ? (
+        !updates.some(
+          (update) => update.kind === 'message' || update.kind === 'answer',
+        ) ? (
           <p className="webbutler:pt-2.5 webbutler:text-[12px] webbutler:leading-relaxed webbutler:text-[var(--wc-ink)]">
             {task.outcome}
           </p>
         ) : null}
 
-        {/* The task's outputs — the feed is the making-of, these are the
-            results. One tap opens each. */}
-        {onOpenReport || onOpenExtension ? (
+        {/* The task's outputs, for feeds that predate the structured
+            result entries — new tasks carry these as cards in the feed
+            itself, and rendering both would double them up. */}
+        {(onOpenReport &&
+          !updates.some((update) => update.kind === 'report')) ||
+        (onOpenExtension &&
+          !updates.some((update) => update.kind === 'extension')) ? (
           <div className="webbutler:flex webbutler:flex-wrap webbutler:gap-1.5 webbutler:pt-3">
-            {onOpenReport ? (
+            {onOpenReport &&
+            !updates.some((update) => update.kind === 'report') ? (
               <button
                 type="button"
                 onClick={onOpenReport}
@@ -229,7 +419,8 @@ export function TaskActivityView({
                 Open report
               </button>
             ) : null}
-            {onOpenExtension ? (
+            {onOpenExtension &&
+            !updates.some((update) => update.kind === 'extension') ? (
               <button
                 type="button"
                 onClick={onOpenExtension}

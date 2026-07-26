@@ -5,6 +5,7 @@ import {
   DEFAULT_SHELL_PERSIST,
   MESSAGE,
   TOGGLE_COMMAND,
+  type Availability,
   type BrowserAction,
   type BrowserActionResult,
   type CursorCommand,
@@ -33,6 +34,7 @@ import { findAnswerFixture } from '@web-butler/ui/fixtures';
 import {
   attachAgentTurn,
   cancelAgentTask,
+  checkServerHealth,
   clearReportsRemote,
   clearTasksRemote,
   deleteExtension,
@@ -923,15 +925,26 @@ async function appendTaskUpdate(
   raw: Record<string, unknown>,
 ): Promise<void> {
   const update = toTaskUpdate(raw);
-  if (!update) return;
+  if (update) await pushTaskUpdate(taskId, update);
+}
+
+/** Land one feed line (streamed or structured): merge/dedupe, store,
+    mirror into the task's activity chip, poke a watching side panel. */
+async function pushTaskUpdate(taskId: string, update: TaskUpdate) {
   const all = await taskUpdatesItem.getValue();
   const feed = [...(all[taskId] ?? [])];
   const last = feed[feed.length - 1];
-  if (last && last.kind === update.kind && update.kind !== 'tool') {
+  const prose = update.kind === 'thought' || update.kind === 'message';
+  if (last && last.kind === update.kind && prose) {
     // Streamed fragments of the same prose block grow the last line.
     feed[feed.length - 1] = { ...last, text: last.text + update.text };
-  } else if (last && last.kind === 'tool' && last.text === update.text) {
-    // Repeated identical tool titles add nothing.
+  } else if (
+    last &&
+    last.kind === update.kind &&
+    (update.kind === 'tool' || update.kind === 'browser') &&
+    last.text === update.text
+  ) {
+    // Repeated identical action titles add nothing.
     return;
   } else {
     feed.push(update);
@@ -942,8 +955,18 @@ async function appendTaskUpdate(
   });
   // The feed's newest line doubles as the task's "doing X right now" —
   // surfaced on the chips in every tab (throttled; chunks are chatty).
+  // Settle-time result entries stay out of it: the run is over, and
+  // settleTask clears the activity line right after.
   const line = feed[feed.length - 1];
-  queueActivity(taskId, `${line.kind === 'thought' ? '· ' : ''}${line.text}`);
+  if (
+    line.kind === 'thought' ||
+    line.kind === 'message' ||
+    line.kind === 'tool' ||
+    line.kind === 'browser' ||
+    line.kind === 'user'
+  ) {
+    queueActivity(taskId, `${line.kind === 'thought' ? '· ' : ''}${line.text}`);
+  }
   const focus = await panelFocusItem.getValue();
   if (focus.kind === 'task' && focus.taskId === taskId) void notifyPanel();
 }
@@ -1323,14 +1346,48 @@ async function gatherOpenTabs(activeTabId: number): Promise<OpenTab[]> {
  * animate the ghost cursor in that tab. `tabs` is answered directly (it
  * needs chrome.tabs, not the debugger). Attachment is torn down when the
  * run settles (see finishBrowserControl).
+ *
+ * The relay is tapped on the way through: every on-page indicator (status
+ * pills, labeled cursor moves, the screenshot flash) also lands in the
+ * task's activity feed as a structured 'browser' entry, so the side panel
+ * narrates the same acts the ghost cursor performs — with the element
+ * names performAction resolved, which only exist here.
  */
-function browserActionHandler(tabId: number) {
+function browserActionHandler(taskId: string, tabId: number) {
+  let current: BrowserAction | null = null;
+  const note = (text: string) =>
+    void pushTaskUpdate(taskId, {
+      at: Date.now(),
+      kind: 'browser',
+      verb: current?.kind,
+      text,
+    });
   const relay = (cursor: CursorCommand) => {
     void browser.tabs
       .sendMessage(tabId, { type: MESSAGE.BROWSER_CURSOR, cursor })
       .catch(() => {}); // tab navigated/closed — the cursor just won't show
+    if (cursor.kind === 'status') {
+      note(cursor.text);
+    } else if (cursor.kind === 'flash') {
+      note('Took a screenshot');
+    } else if (cursor.kind === 'move' && current) {
+      // The glide before a pointer act — its label is the target's
+      // accessible name, the most human line available for the feed.
+      if (current.kind === 'click') {
+        note(cursor.label ? `Clicking "${cursor.label}"` : 'Clicking the page');
+      } else if (current.kind === 'type') {
+        note(cursor.label ? `Typing into "${cursor.label}"` : 'Typing');
+      } else if (current.kind === 'select') {
+        note(
+          `Picking "${current.option}"${cursor.label ? ` in "${cursor.label}"` : ''}`,
+        );
+      }
+    }
   };
   return async (action: BrowserAction): Promise<BrowserActionResult> => {
+    current = action;
+    // The one verb with no on-page indicator to mirror.
+    if (action.kind === 'scroll') note('Scrolled the page');
     if (action.kind === 'tabs') {
       // Answered without the debugger, so it announces itself here rather
       // than in performAction like every other verb.
@@ -1387,7 +1444,7 @@ async function driveTurn(
   const handlers = {
     onUpdate: (update: Record<string, unknown>) =>
       void appendTaskUpdate(run.id, update),
-    onAction: browserActionHandler(run.tabId),
+    onAction: browserActionHandler(run.id, run.tabId),
     onJob: (id: string) => {
       jobId = id;
       drivenJobs.add(id);
@@ -1494,6 +1551,62 @@ async function executeTabRun(
   await finishTabRun(run, turn);
 }
 
+/**
+ * Append the turn's RESULTS to the task's activity feed as structured
+ * entries — the feed is the making-of; these are what came out of it,
+ * rendered as cards and chips in the side panel. Runs before settleTask so
+ * they ride the durable sync and replay for old tasks next session.
+ */
+async function appendOutcomeUpdates(
+  taskId: string,
+  turn: Exclude<AgentTurnOutcome, { error: string }>,
+): Promise<void> {
+  for (const outcome of turn.outcomes) {
+    if (outcome.type === 'artifact') {
+      await pushTaskUpdate(taskId, {
+        at: Date.now(),
+        kind: 'report',
+        text: outcome.title,
+        detail: outcome.description,
+      });
+    } else if (outcome.type === 'extension') {
+      if (outcome.action === 'delete') {
+        await pushTaskUpdate(taskId, {
+          at: Date.now(),
+          kind: 'tool',
+          text: `Removed extension "${outcome.name}"`,
+        });
+      } else {
+        await pushTaskUpdate(taskId, {
+          at: Date.now(),
+          kind: 'extension',
+          text: outcome.name,
+          detail: outcome.description,
+        });
+      }
+    } else if (outcome.markdown.trim()) {
+      await pushTaskUpdate(taskId, {
+        at: Date.now(),
+        kind: 'answer',
+        text: outcome.markdown.trim(),
+      });
+    }
+  }
+  if (turn.highlights?.length) {
+    await pushTaskUpdate(taskId, {
+      at: Date.now(),
+      kind: 'highlights',
+      text: `Marked ${turn.highlights.length} ${
+        turn.highlights.length === 1 ? 'place' : 'places'
+      } on the page`,
+      marks: turn.highlights.map((highlight, index) => ({
+        id: highlight.id,
+        label: highlight.label?.trim() || `Note ${index + 1}`,
+      })),
+    });
+  }
+}
+
 /** Land a tab run's terminal outcome — shared by the live executor and the
     resume path, so a revived turn finishes exactly like an unbroken one. */
 async function finishTabRun(run: Run, turn: AgentTurnOutcome) {
@@ -1546,6 +1659,7 @@ async function finishTabRun(run: Run, turn: AgentTurnOutcome) {
     // Marker overlays for the origin tab. Tab runs only — a highlight is
     // meaningless anywhere but the page the prompt came from.
     if (turn.highlights?.length) result.highlights = turn.highlights;
+    await appendOutcomeUpdates(run.id, turn);
   }
 
   // Displaced = a newer prompt owns this tab's answer slot now. The task
@@ -1624,6 +1738,7 @@ async function finishGlobalRun(run: Run, turn: AgentTurnOutcome) {
       outcome.type === 'artifact'
         ? await publishArtifact(run, outcome)
         : undefined;
+    await appendOutcomeUpdates(run.id, turn);
     await settleTask(
       run.id,
       {
@@ -1786,13 +1901,24 @@ async function watchForRebuilds() {
 async function remountContentScripts() {
   const tabs = await browser.tabs.query({ url: ['http://*/*', 'https://*/*'] });
   await Promise.allSettled(
-    tabs.map((tab) =>
+    tabs.flatMap((tab) =>
       tab.id == null
-        ? Promise.resolve()
-        : browser.scripting.executeScript({
-            target: { tabId: tab.id },
-                      files: ['/content-scripts/content.js'],
-          }),
+        ? []
+        : [
+            browser.scripting.executeScript({
+              target: { tabId: tab.id },
+              files: ['/content-scripts/content.js'],
+            }),
+            // The MAIN-world key guard (key-guard.content.ts). Re-running it
+            // stacks a second set of capture listeners on the page — inert
+            // duplicates (the disguise is idempotent), which beats leaving a
+            // tab where typing into the shell trips the site's hotkeys.
+            browser.scripting.executeScript({
+              target: { tabId: tab.id },
+              files: ['/content-scripts/key-guard.js'],
+              world: 'MAIN',
+            }),
+          ],
     ),
   );
 }
@@ -2074,6 +2200,35 @@ export default defineBackground(() => {
         return getStarters(message.url, message.title, message.signal).catch(
           () => [],
         );
+      }
+
+      if (message?.type === MESSAGE.AVAILABILITY_GET) {
+        // Can the butler actually work right now? Server first (cheap,
+        // unauthenticated), then any connected provider — checked in the
+        // same order a send would route, and served from the same status
+        // cache so this poll doesn't hammer the VM.
+        return (async (): Promise<Availability> => {
+          if (!(await checkServerHealth())) {
+            return { server: false, provider: false };
+          }
+          if (await devBypassAuth.getValue()) {
+            return { server: true, provider: true };
+          }
+          const selected = (await settingsItem.getValue()).provider ?? 'codex';
+          const order: DeviceAuthProvider[] = [
+            selected,
+            ...(['codex', 'grok', 'claude'] as const).filter(
+              (p) => p !== selected,
+            ),
+          ];
+          for (const candidate of order) {
+            const auth = await cachedProviderStatus(candidate);
+            if (auth.status === 'connected') {
+              return { server: true, provider: true };
+            }
+          }
+          return { server: true, provider: false };
+        })();
       }
 
       if (message?.type === MESSAGE.SHELL_GET) {

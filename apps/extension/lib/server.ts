@@ -21,7 +21,11 @@ import type {
  * are unreliable in MV3 service workers), then POST /api/init, which lazily
  * provisions the user's Freestyle sandbox VM and returns its id.
  */
-const SERVER_URL = 'http://localhost:8787';
+/**
+ * Local dev server by default; public builds override it at build time
+ * (`npm run build:prod` points at the deployed Cloudflare Worker).
+ */
+const SERVER_URL = import.meta.env.WXT_SERVER_URL || 'http://localhost:8787';
 
 /** Survives browser restarts — this IS the anonymous identity. */
 const authTokenItem = storage.defineItem<string | null>('local:authToken', {
@@ -118,6 +122,25 @@ async function initialize(): Promise<string | null> {
   } catch (error) {
     console.warn('[web-butler] initialization deferred:', error);
     return null;
+  }
+}
+
+/**
+ * Is the server reachable at all? A fast, unauthenticated liveness probe
+ * for the shell's availability notice — distinct from provider status,
+ * which requires the server AND the user's VM to answer.
+ */
+export async function checkServerHealth(): Promise<boolean> {
+  try {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), 5_000);
+    const response = await fetch(`${SERVER_URL}/health`, {
+      signal: abort.signal,
+    });
+    clearTimeout(timer);
+    return response.ok;
+  } catch {
+    return false;
   }
 }
 
@@ -222,14 +245,17 @@ export type AgentTurnOutcome =
   | { error: string };
 
 /**
- * Watchdogs for the agent stream. The server heartbeats every 20s even
- * when the agent is quiet, so prolonged byte-silence means the connection
- * or server is actually dead — not a slow tool call. The overall cap is a
- * backstop against a turn that streams forever without ever finishing.
- * Both settle the run as a failed turn instead of leaving it "working".
+ * Watchdogs for the turn poll loop. Staleness detection lives server-side
+ * now (the daemon heartbeats the turn row; a quiet row gets failed on
+ * read), so the client only needs an overall cap — a backstop against a
+ * turn that "runs" forever — and a tolerance for transient poll failures.
  */
-const STREAM_IDLE_TIMEOUT_MS = 90_000;
 const TURN_TIMEOUT_MS = 30 * 60_000;
+/** Poll cadence while a turn runs. Browser actions ride the same poll, so
+    this also bounds the ghost cursor's reaction time. */
+const TURN_POLL_MS = 900;
+/** Consecutive failed polls before the connection is declared dead. */
+const TURN_POLL_MAX_FAILURES = 12;
 
 /**
  * Post one browser action's result back to the waiting turn, unblocking
@@ -283,211 +309,199 @@ type TurnStreamHandlers = Pick<
   'onUpdate' | 'onAction' | 'onJob' | 'onSeq' | 'signal'
 >;
 
-/** Terminal errors that mean the CONNECTION died, not the turn: the job is
-    likely still running server-side and worth re-attaching to. */
-const TRANSPORT_ERRORS = new Set([
-  'Could not reach the server',
-  'The agent stream ended unexpectedly',
-  'The agent stopped responding. It may have hit a snag on the server.',
-]);
+/** Terminal errors that mean the CONNECTION died, not the turn: the turn
+    row is likely still live server-side and worth re-attaching to. */
+const TRANSPORT_ERRORS = new Set(['Could not reach the server']);
 
 export function isTransportError(error: string): boolean {
   return TRANSPORT_ERRORS.has(error);
 }
 
-/** Attach said 404: the server no longer knows the job (it restarted, or
-    the job finished and aged out). Nothing left to re-attach to. */
+/** The poll said 404: the server no longer knows the turn (it was swept,
+    or never existed). Nothing left to re-attach to. */
 export const TURN_GONE_ERROR = 'turn-gone';
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** One poll response from GET /api/agent/turn/:id. */
+type TurnPollData = {
+  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+  updates?: Array<{ seq: number; updates: Record<string, unknown>[] }>;
+  actions?: BrowserAction[];
+  text?: string;
+  stopReason?: string;
+  outcomes?: AgentOutcome[];
+  suggestions?: string[];
+  highlights?: PageHighlight[];
+  error?: string;
+};
+
 /**
- * Consume one NDJSON turn stream (initial POST or re-attach GET) down to
- * its terminal line. `{"update"}` lines stream while the agent works
- * (forwarded to `onUpdate`), `{"action"}` lines request a browser action
- * (handed to `onAction`, whose result is POSTed back out-of-band), and
- * exactly one terminal line carries either the outcomes (with the raw
- * reply text) or an error.
+ * Poll one turn row to its terminal state. Turns are rows in the server's
+ * database, executed by the daemon on the user's VM — this loop is just a
+ * window onto that row: update batches after the cursor stream to
+ * `onUpdate`, pending browser actions are performed (results ride back on
+ * their own request), and the terminal payload lands when the row settles.
+ * A dropped poll costs one tick, never the turn; a recycled service worker
+ * resumes by calling this again with the stored cursor.
  */
-async function consumeTurnStream(
-  request: (signal: AbortSignal) => Promise<Response>,
+async function pollTurnToTerminal(
+  turnId: string,
+  since: number,
   handlers: TurnStreamHandlers,
-  opts: { notFoundMeansGone?: boolean } = {},
 ): Promise<AgentTurnOutcome> {
-  const { onUpdate, onAction, onJob, onSeq, signal } = handlers;
-  const abort = new AbortController();
-  let timeoutError: string | null = null;
-  const fail = (reason: string) => {
-    timeoutError = reason;
-    abort.abort();
-  };
-  // The caller's stop button funnels into the same abort as the watchdogs.
-  if (signal?.aborted) fail('Stopped.');
-  signal?.addEventListener('abort', () => fail('Stopped.'), { once: true });
-  let idleTimer = setTimeout(() => {}, 0);
-  const armIdle = () =>
-    (idleTimer = setTimeout(
-      () => fail('The agent stopped responding. It may have hit a snag on the server.'),
-      STREAM_IDLE_TIMEOUT_MS,
-    ));
-  const turnTimer = setTimeout(
-    () => fail('The task ran for 30 minutes without finishing, so it was stopped.'),
-    TURN_TIMEOUT_MS,
-  );
+  const { onUpdate, onAction, onSeq, signal } = handlers;
+  const deadline = Date.now() + TURN_TIMEOUT_MS;
+  /** Actions dispatched by THIS loop — pending rows repeat on every poll
+      until the result lands, and a click must not double-fire. */
+  const dispatched = new Set<string>();
+  let cursor = since;
+  let failures = 0;
 
-  try {
-    if (!(await ensureInitialized())) {
-      return { error: 'Sandbox not ready yet' };
-    }
-    const response = await request(abort.signal);
-    if (!response.ok || !response.body) {
-      if (response.status === 404 && opts.notFoundMeansGone) {
-        return { error: TURN_GONE_ERROR };
-      }
-      const body = await response.json().catch(() => null);
+  for (;;) {
+    if (signal?.aborted) return { error: 'Stopped.' };
+    if (Date.now() > deadline) {
       return {
-        error: body?.error ?? `agent request failed: ${response.status}`,
+        error: 'The task ran for 30 minutes without finishing, so it was stopped.',
       };
     }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let outcome: AgentTurnOutcome | null = null;
-
-    const handleLine = (line: string) => {
-      if (!line.trim()) return;
-      let message: {
-        job?: string;
-        seq?: number;
-        update?: Record<string, unknown>;
-        action?: BrowserAction;
-        done?: boolean;
-        stopReason?: string;
-        text?: string;
-        outcomes?: AgentOutcome[];
-        suggestions?: string[];
-        highlights?: PageHighlight[];
-        error?: string;
-      };
-      try {
-        message = JSON.parse(line);
-      } catch {
-        return; // torn frame — the terminal line is what matters
+    let data: TurnPollData | null = null;
+    try {
+      const response = await authedFetch(
+        `/api/agent/turn/${turnId}?since=${cursor}`,
+        { signal },
+      );
+      if (response.status === 404) return { error: TURN_GONE_ERROR };
+      if (response.ok) {
+        data = (await response.json()) as TurnPollData;
+        failures = 0;
+      } else {
+        failures++;
       }
-      if (typeof message.job === 'string') onJob?.(message.job);
-      if (typeof message.seq === 'number') onSeq?.(message.seq);
-      if (message.update) onUpdate?.(message.update);
-      else if (message.action) {
-        // Perform it off the read loop so the stream keeps draining
-        // (heartbeats, further lines) while the cursor animates. The
-        // result rides back to the server on its own request.
-        const requested = message.action;
+    } catch {
+      if (signal?.aborted) return { error: 'Stopped.' };
+      failures++;
+    }
+    if (failures > TURN_POLL_MAX_FAILURES) {
+      return { error: 'Could not reach the server' };
+    }
+    if (data) {
+      for (const batch of data.updates ?? []) {
+        if (batch.seq > cursor) {
+          cursor = batch.seq;
+          onSeq?.(cursor);
+        }
+        for (const update of batch.updates ?? []) onUpdate?.(update);
+      }
+      for (const action of data.actions ?? []) {
+        if (!action?.id || dispatched.has(action.id)) continue;
+        dispatched.add(action.id);
+        // Perform it off the poll loop so updates keep flowing while the
+        // cursor animates. The result rides back on its own request.
         if (onAction) {
-          void onAction(requested)
+          void onAction(action)
             .catch((error: unknown) => ({
               ok: false as const,
               error:
                 error instanceof Error ? error.message : 'browser action failed',
             }))
-            .then((result) => postActionResult(requested.id, result));
+            .then((result) => postActionResult(action.id, result));
         } else {
-          void postActionResult(requested.id, {
+          void postActionResult(action.id, {
             ok: false,
             error: 'this browser cannot perform actions right now',
           });
         }
-      } else if (message.done) {
-        const text = message.text ?? '';
-        outcome = {
+      }
+      if (data.status === 'done' || data.status === 'cancelled') {
+        const text = data.text ?? '';
+        return {
           text,
-          stopReason: message.stopReason ?? 'end_turn',
-          // Older servers won't send outcomes; degrade like they do.
-          outcomes: message.outcomes ?? [
+          stopReason: data.stopReason ?? 'end_turn',
+          outcomes: data.outcomes ?? [
             { type: 'response', markdown: text || 'Done.' },
           ],
-          suggestions: message.suggestions,
-          highlights: message.highlights,
+          suggestions: data.suggestions,
+          highlights: data.highlights,
         };
-      } else if (message.error) outcome = { error: message.error };
-    };
-
-    armIdle();
-    for (;;) {
-      const { done, value } = await reader.read();
-      // Any bytes at all (updates or the server's 20s heartbeats) prove
-      // the connection is alive — re-arm the silence watchdog.
-      clearTimeout(idleTimer);
-      if (done) break;
-      armIdle();
-      buffer += decoder.decode(value, { stream: true });
-      let index: number;
-      while ((index = buffer.indexOf('\n')) !== -1) {
-        handleLine(buffer.slice(0, index));
-        buffer = buffer.slice(index + 1);
       }
-      // The terminal line settles the turn — stop reading rather than
-      // waiting on the server's close (a replayed terminal on re-attach
-      // may arrive on a stream that stays open a beat longer).
-      if (outcome) break;
+      if (data.status === 'failed') {
+        return { error: data.error ?? 'agent turn failed' };
+      }
     }
-    if (!outcome) handleLine(buffer);
-
-    return outcome ?? { error: 'The agent stream ended unexpectedly' };
-  } catch {
-    return { error: timeoutError ?? 'Could not reach the server' };
-  } finally {
-    clearTimeout(idleTimer);
-    clearTimeout(turnTimer);
+    await sleep(TURN_POLL_MS * (failures > 0 ? failures : 1));
   }
 }
 
 /**
- * Start one agent turn on the sandbox VM via the server's ACP bridge and
- * consume its stream. The turn runs as a detached job server-side: if this
- * stream dies (worker recycled, network blip), the turn keeps going — use
- * the id from `onJob` with `attachAgentTurn` to pick it back up.
+ * Start one agent turn: enqueue it on the server (which wakes the VM
+ * daemon that executes it) and poll the row to its terminal. The turn is
+ * a database row, fully detached from this call: if the poll dies (worker
+ * recycled, network blip), the turn keeps going — use the id from `onJob`
+ * with `attachAgentTurn` to pick it back up.
  */
 export async function runAgentPrompt(
   opts: RunAgentOptions,
 ): Promise<AgentTurnOutcome> {
   const { provider, prompt, page, taskId, openTabs, openAnswer } = opts;
-  return consumeTurnStream(
-    (signal) =>
-      authedFetch('/api/agent/prompt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, prompt, page, taskId, openTabs, openAnswer }),
-        signal,
-      }),
-    opts,
-  );
+  try {
+    if (!(await ensureInitialized())) {
+      return { error: 'Sandbox not ready yet' };
+    }
+    const response = await authedFetch('/api/agent/prompt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, prompt, page, taskId, openTabs, openAnswer }),
+      signal: opts.signal,
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      return {
+        error: body?.error ?? `agent request failed: ${response.status}`,
+      };
+    }
+    const { turn } = (await response.json()) as { turn: string };
+    if (typeof turn !== 'string') {
+      return { error: 'The server did not accept the task' };
+    }
+    opts.onJob?.(turn);
+    return await pollTurnToTerminal(turn, 0, opts);
+  } catch {
+    return opts.signal?.aborted
+      ? { error: 'Stopped.' }
+      : { error: 'Could not reach the server' };
+  }
 }
 
 export type AttachAgentOptions = TurnStreamHandlers & {
-  /** The job id announced by the original turn's `onJob`. */
+  /** The turn id announced by the original run's `onJob`. */
   jobId: string;
-  /** Last seq this client saw — the server replays everything after it. */
+  /** Last seq this client saw — polling resumes after it. */
   since?: number;
 };
 
 /**
- * Re-attach to a turn job whose stream was lost (recycled service worker,
- * dropped connection). Missed updates replay from `since`, pending browser
+ * Re-attach to a turn whose poller died (recycled service worker, dropped
+ * connection). Missed update batches replay from `since`, pending browser
  * actions are re-delivered, and the turn settles exactly like the original
  * call would have. `TURN_GONE_ERROR` means the server no longer knows the
- * job — the task is genuinely dead.
+ * turn — the task is genuinely dead.
  */
 export async function attachAgentTurn(
   opts: AttachAgentOptions,
 ): Promise<AgentTurnOutcome> {
-  const params = new URLSearchParams({
-    job: opts.jobId,
-    since: String(opts.since ?? 0),
-  });
-  return consumeTurnStream(
-    (signal) => authedFetch(`/api/agent/attach?${params}`, { signal }),
-    opts,
-    { notFoundMeansGone: true },
-  );
+  try {
+    if (!(await ensureInitialized())) {
+      return { error: 'Sandbox not ready yet' };
+    }
+    opts.onJob?.(opts.jobId);
+    return await pollTurnToTerminal(opts.jobId, opts.since ?? 0, opts);
+  } catch {
+    return opts.signal?.aborted
+      ? { error: 'Stopped.' }
+      : { error: 'Could not reach the server' };
+  }
 }
 
 /**
@@ -510,10 +524,15 @@ export async function cancelAgentTask(taskId: string): Promise<void> {
 
 /**
  * Page-specific starter prompts for the empty prompt box, generated by
- * the active provider's agent on the server (cached there per page).
- * Starters are decoration: every failure mode — offline, provider not
- * signed in, thin page — collapses to "no chips" rather than an error.
+ * the active provider's agent through the same turn queue as real tasks
+ * (cached server-side per page). The POST answers instantly from cache or
+ * hands back a pending turn id to poll. Starters are decoration: every
+ * failure mode — offline, provider not signed in, thin page, slow agent —
+ * collapses to "no chips" rather than an error.
  */
+const STARTERS_POLL_MS = 2_500;
+const STARTERS_POLL_BUDGET_MS = 80_000;
+
 export async function fetchStarters(opts: {
   provider: DeviceAuthProvider;
   url: string;
@@ -521,6 +540,10 @@ export async function fetchStarters(opts: {
   /** Compact page digest (capturePageSignal). */
   signal: string;
 }): Promise<string[]> {
+  const asStarters = (data: { starters?: unknown }) =>
+    Array.isArray(data.starters)
+      ? data.starters.filter((s): s is string => typeof s === 'string')
+      : [];
   try {
     if (!(await ensureInitialized())) return [];
     const response = await authedFetch('/api/agent/suggest', {
@@ -529,10 +552,26 @@ export async function fetchStarters(opts: {
       body: JSON.stringify(opts),
     });
     if (!response.ok) return [];
-    const data = (await response.json()) as { starters?: unknown };
-    return Array.isArray(data.starters)
-      ? data.starters.filter((s): s is string => typeof s === 'string')
-      : [];
+    const data = (await response.json()) as {
+      starters?: unknown;
+      pending?: boolean;
+      turn?: string;
+    };
+    if (!data.pending || typeof data.turn !== 'string') {
+      return asStarters(data);
+    }
+    const deadline = Date.now() + STARTERS_POLL_BUDGET_MS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, STARTERS_POLL_MS));
+      const poll = await authedFetch(`/api/agent/suggest/${data.turn}`);
+      if (!poll.ok) return [];
+      const state = (await poll.json()) as {
+        starters?: unknown;
+        pending?: boolean;
+      };
+      if (!state.pending) return asStarters(state);
+    }
+    return [];
   } catch {
     return [];
   }

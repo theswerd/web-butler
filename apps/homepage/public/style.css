@@ -764,19 +764,19 @@ main {
   }
 }
 
-/* Install — two ways in: the store that's coming, the repo that works. */
+/* Install — three ways in: the store that's coming, by hand, by agent. */
 .install {
   border-top: 1px solid var(--hairline);
   padding: 52px 0 88px;
 }
 .install-cols {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 48px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 36px;
 }
 .install-col + .install-col {
   border-left: 1px solid var(--hairline);
-  padding-left: 48px;
+  padding-left: 36px;
 }
 .install-col h3 {
   margin: 0 0 8px;
@@ -792,7 +792,7 @@ main {
   line-height: 1.55;
   color: var(--text-3);
 }
-@media (max-width: 760px) {
+@media (max-width: 1000px) {
   .install-cols {
     grid-template-columns: 1fr;
     gap: 40px;
@@ -822,8 +822,24 @@ main {
   margin: 0 0 26px;
   max-width: 58ch;
   font-size: 13px;
+  line-height: 1.6;
   color: var(--text-3);
 }
+.install-note code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 1px 5px;
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  background: #fafafa;
+  white-space: nowrap;
+}
+.install-note a {
+  color: var(--text-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.install-note a:hover { color: var(--ink); }
 .btn-ghost {
   display: inline-flex;
   align-items: center;
@@ -839,6 +855,51 @@ main {
 .btn-ghost:hover {
   background: var(--ink);
   color: var(--paper);
+}
+/* The same pill as a real <button>, with the copy icon inside. */
+.btn-ghost-button {
+  gap: 7px;
+  background: transparent;
+  font-family: var(--sans);
+  cursor: pointer;
+}
+.btn-ghost-button svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.btn-ghost-button.copied {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: transparent;
+}
+/* Deep links into the agents themselves, under the copy button. */
+.agent-links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.agent-links-label {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+.agent-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  text-decoration: none;
+  transition: border-color 140ms, color 140ms;
+}
+.agent-chip:hover {
+  border-color: var(--ink);
+  color: var(--ink);
 }
 .install-actions {
   display: flex;
@@ -857,6 +918,7 @@ main {
   color: var(--text-3);
   font-family: var(--sans);
   font-size: 13px;
+  text-decoration: none;
   cursor: pointer;
   transition: color 140ms, background 140ms;
 }

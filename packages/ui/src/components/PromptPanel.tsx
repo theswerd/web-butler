@@ -72,6 +72,13 @@ type PromptPanelProps = {
   /** Element picker button state + toggle. */
   pickerActive?: boolean;
   onTogglePicker?: () => void;
+  /**
+   * Availability notice ("Can't reach the Web Butler server", "No AI
+   * connected…"): replaces the idle placeholder in a warning tone so the
+   * user learns the butler can't work BEFORE a send fails. Typing still
+   * works — the notice only occupies the empty box.
+   */
+  notice?: string | null;
 };
 
 export function PromptPanel({
@@ -86,6 +93,7 @@ export function PromptPanel({
   onStop,
   pickerActive = false,
   onTogglePicker,
+  notice = null,
 }: PromptPanelProps) {
   const [internalLoading, setInternalLoading] = useState(false);
   // Controlled when the shell passes `loading`; self-driven mock otherwise.
@@ -140,7 +148,7 @@ export function PromptPanel({
         <div className="webbutler:relative webbutler:flex webbutler:min-w-0 webbutler:flex-1 webbutler:items-center">
           <PromptInputTextarea
             placeholder={
-              isLoading
+              isLoading || (notice != null && !pickerActive)
                 ? ''
                 : pickerActive
                   ? 'Select an element · shift-click picks several…'
@@ -158,6 +166,27 @@ export function PromptPanel({
               }
             }}
           />
+
+          {/* Availability notice sits where the placeholder would: amber,
+              with a small dot, gone the moment the user types. */}
+          <AnimatePresence>
+            {!isLoading && !pickerActive && notice && value.length === 0 ? (
+              <motion.span
+                key="notice"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="webbutler:pointer-events-none webbutler:absolute webbutler:inset-0 webbutler:flex webbutler:items-center webbutler:gap-1.5 webbutler:overflow-hidden webbutler:text-[13px] webbutler:whitespace-nowrap webbutler:text-[#d97706]"
+              >
+                <span
+                  aria-hidden
+                  className="webbutler:size-1.5 webbutler:shrink-0 webbutler:rounded-full webbutler:bg-[#d97706]"
+                />
+                <span className="webbutler:truncate">{notice}</span>
+              </motion.span>
+            ) : null}
+          </AnimatePresence>
 
           {/* Sent text floats up and out of the (already cleared) box. */}
           <AnimatePresence>

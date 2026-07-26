@@ -32,6 +32,7 @@ import {
   TaskToast,
   type GhostCursorState,
   comboMatches,
+  consumeEscapeClaim,
   capturePageContext,
   hotkeyRecording,
   isExcluded,
@@ -43,6 +44,7 @@ import {
   SPRING_SHEET,
   SPRING_UI,
   useIsDark,
+  type Availability,
   type PageHighlight,
   type PickedElement,
   type ProviderAuth,
@@ -60,6 +62,7 @@ import {
   useRun,
   useTasks,
 } from '../lib/agent-state';
+import { escapeSink } from '../lib/escape-sink';
 import { useOnboarding, useUserScriptsEnabled } from '../lib/onboarding';
 import { useProviderAuth } from '../lib/provider-auth';
 import { useSettings } from '../lib/settings-store';
@@ -350,6 +353,48 @@ export function App() {
 
   // Sign-in gate: popped when a message was rejected for missing auth.
   const [authGate, setAuthGate] = useState(false);
+
+  // Availability: can the butler actually work right now (server up, an
+  // AI connected)? Checked when the shell opens and re-checked on a slow
+  // tick — fast while degraded so recovery notices quickly, lazy while
+  // healthy. The result renders as an amber notice in the empty prompt
+  // box instead of letting the first send fail mysteriously. Menu and
+  // gate state are dependencies on purpose: closing either after
+  // connecting a provider re-checks immediately.
+  const [availability, setAvailability] = useState<Availability | null>(null);
+  const menuOpenNow = shell?.menuOpen === true;
+  useEffect(() => {
+    if (shellMode !== 'open' || onboarding !== 'done') return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const check = () => {
+      void browser.runtime
+        .sendMessage({ type: MESSAGE.AVAILABILITY_GET })
+        .then(
+          (result: Availability | null) => {
+            if (cancelled) return;
+            setAvailability(result);
+            const healthy = result?.server === true && result.provider;
+            timer = window.setTimeout(check, healthy ? 180_000 : 20_000);
+          },
+          () => {
+            // No background answer (extension just updated) — try again.
+            if (!cancelled) timer = window.setTimeout(check, 20_000);
+          },
+        );
+    };
+    check();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [shellMode, onboarding, menuOpenNow, authGate]);
+  const availabilityNotice =
+    availability == null || (availability.server && availability.provider)
+      ? null
+      : !availability.server
+        ? "Can't reach the Web Butler server"
+        : 'No AI connected · connect one under Providers';
 
   // Which provider's sign-in pages this tab lives on, if any. On those
   // pages the shell proactively surfaces the in-flight code + instructions.
@@ -722,31 +767,56 @@ export function App() {
   useEffect(() => {
     if (!shell) return;
 
+    // Bare Esc is owned by the content script's document_start sink: while
+    // the shell is open it runs this flow and the page never sees the key;
+    // while collapsed it declines and the page keeps its Esc. (Registered
+    // ahead of every page script, it can silence even capture-phase site
+    // listeners — something a React handler in here never could.)
+    const closeTopmost = (): boolean => {
+      if (hotkeyRecording.active) return false;
+      if (shell.mode !== 'open') return false;
+      // The picker owns Esc while active (cancels the pick) — its own
+      // window listener sits behind the sink, so act for it here.
+      if (pickerActiveRef.current) {
+        setPickerActive(false);
+        promptRef.current?.focus();
+        return true;
+      }
+      // In-shell claims next: the menu search field clearing its text.
+      if (consumeEscapeClaim()) return true;
+      // An open message dismisses first, before anything else closes —
+      // then the armed task reference, then the menu, then the shell.
+      if (answerOpenRef.current) {
+        clearRun();
+        return true;
+      }
+      if (replyTaskRef.current) {
+        setReplyTaskId(null);
+        return true;
+      }
+      if (shell.menuOpen) {
+        patchShell({ menuOpen: false });
+        // Focus was likely inside the menu — hand it back to the prompt.
+        promptRef.current?.focus();
+        return true;
+      }
+      collapse();
+      return true;
+    };
+    escapeSink.onEscape = closeTopmost;
+
     const dispatchCombo = (event: KeyboardEvent) => {
       if (comboMatches(settings.hotkeyClose, event)) {
-        // An open message dismisses first, before anything else closes —
-        // then the armed task reference, then the menu, then the shell.
-        if (answerOpenRef.current) {
-          event.preventDefault();
-          clearRun();
-          return;
-        }
-        if (replyTaskRef.current) {
-          event.preventDefault();
-          setReplyTaskId(null);
-          return;
-        }
-        if (shell.menuOpen) {
-          event.preventDefault();
-          patchShell({ menuOpen: false });
-          // Focus was likely inside the menu — hand it back to the prompt.
-          promptRef.current?.focus();
-          return;
-        }
-        if (shell.mode === 'open') {
-          event.preventDefault();
-          collapse();
-        }
+        // Bare Escape only ever lands here when the sink declined it
+        // (shell collapsed) — nothing to close, and the page keeps the
+        // key. Custom close combos still run the same flow in full.
+        const bareEscape =
+          event.key === 'Escape' &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          !event.shiftKey;
+        if (!bareEscape && closeTopmost()) event.preventDefault();
         return;
       }
 
@@ -790,6 +860,7 @@ export function App() {
     return () => {
       window.removeEventListener('keydown', onKeyDown, true);
       window.removeEventListener('keyup', onKeyUp, true);
+      if (escapeSink.onEscape === closeTopmost) escapeSink.onEscape = null;
     };
   }, [
     shell,
@@ -1126,19 +1197,33 @@ export function App() {
           ))}
       </AnimatePresence>
 
-      {/* The agent's markers — amber, quiet, never scrolling on their own.
-          One at most carries the open note (the focused one). */}
+      {/* The agent's markers — theme accent, quiet, never scrolling on their own.
+          One at most carries the open note (the focused one). Removal is
+          the pill's hover ✕ or the note's "Remove"; the rest survive until
+          the next send. A `highlight:` link can't resurrect a dismissed
+          marker — deliberate: dismissing is the user saying "seen it". */}
       <AnimatePresence>
-        {agentHighlights.map((highlight) => (
+        {agentHighlights.map((highlight, index) => (
           <AgentHighlight
             key={highlight.id}
+            variant="corners-tag"
+            accent={accentColor}
             highlight={highlight}
+            index={index}
             focused={focusedHighlightId === highlight.id}
             onFocusToggle={() =>
               setFocusedHighlightId((current) =>
                 current === highlight.id ? null : highlight.id,
               )
             }
+            onDismiss={() => {
+              setAgentHighlights((current) =>
+                current.filter((entry) => entry.id !== highlight.id),
+              );
+              setFocusedHighlightId((current) =>
+                current === highlight.id ? null : current,
+              );
+            }}
           />
         ))}
       </AnimatePresence>
@@ -1313,6 +1398,7 @@ export function App() {
                   onStop={clearRun}
                   pickerActive={pickerActive}
                   onTogglePicker={() => setPickerActive((current) => !current)}
+                  notice={availabilityNotice}
                   leading={
                     <PlusButton
                       ref={plusRef}

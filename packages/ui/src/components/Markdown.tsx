@@ -51,15 +51,15 @@ export function Markdown({
         <button
           type="button"
           onClick={onHighlightLink ? () => onHighlightLink(id) : undefined}
-          className={`webbutler:inline-flex webbutler:translate-y-px webbutler:items-baseline webbutler:gap-1 webbutler:rounded-full webbutler:border webbutler:border-[#f59e0b]/45 webbutler:bg-[#f59e0b]/10 webbutler:px-1.5 webbutler:py-px webbutler:align-baseline webbutler:text-[11px] webbutler:leading-[1.4] webbutler:font-medium webbutler:text-[var(--wc-ink)] webbutler:transition-colors webbutler:duration-100 ${
+          className={`webbutler:inline-flex webbutler:translate-y-px webbutler:items-baseline webbutler:gap-1 webbutler:rounded-full webbutler:border webbutler:border-[color:color-mix(in_srgb,var(--wc-selection,#f59e0b)_45%,transparent)] webbutler:bg-[color-mix(in_srgb,var(--wc-selection,#f59e0b)_10%,transparent)] webbutler:px-1.5 webbutler:py-px webbutler:align-baseline webbutler:text-[11px] webbutler:leading-[1.4] webbutler:font-medium webbutler:text-[var(--wc-ink)] webbutler:transition-colors webbutler:duration-100 ${
             onHighlightLink
-              ? 'webbutler:cursor-pointer webbutler:hover:border-[#f59e0b] webbutler:hover:bg-[#f59e0b]/20'
+              ? 'webbutler:cursor-pointer webbutler:hover:border-[color:var(--wc-selection,#f59e0b)] webbutler:hover:bg-[color-mix(in_srgb,var(--wc-selection,#f59e0b)_20%,transparent)]'
               : 'webbutler:cursor-default'
           }`}
         >
           <span
             aria-hidden
-            className="webbutler:size-1.5 webbutler:shrink-0 webbutler:self-center webbutler:rounded-full webbutler:bg-[#f59e0b]"
+            className="webbutler:size-1.5 webbutler:shrink-0 webbutler:self-center webbutler:rounded-full webbutler:bg-[var(--wc-selection,#f59e0b)]"
           />
           {props.children}
         </button>

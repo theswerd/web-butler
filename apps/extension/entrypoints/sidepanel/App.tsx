@@ -1,11 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { browser } from 'wxt/browser';
-import { ReportView, TaskActivityView, useIsDark } from '@web-butler/ui';
+import {
+  ACCENT_OPTIONS,
+  PanelEmptyState,
+  ReportView,
+  TaskActivityView,
+  useIsDark,
+} from '@web-butler/ui';
 import {
   MESSAGE,
   type PanelState,
   type WebButlerMessage,
 } from '@web-butler/ui/shell';
+import { useSettings } from '@/lib/settings-store';
 
 /**
  * Chrome side panel — two surfaces, one slot, latest-wins:
@@ -21,6 +28,12 @@ import {
 function App() {
   const dark = useIsDark('system');
   const [state, setState] = useState<PanelState | null>(null);
+  // The user's selected accent — highlight chips in feeds and reports wear
+  // it, matching the on-page markers in the tab this panel talks about.
+  const [settings] = useSettings();
+  const accentColor =
+    ACCENT_OPTIONS.find((accent) => accent.id === settings.accent)?.value ??
+    ACCENT_OPTIONS[0].value;
 
   useEffect(() => {
     let mounted = true;
@@ -52,7 +65,10 @@ function App() {
       .catch(() => {});
 
   return (
-    <div id="web-butler-root">
+    <div
+      id="web-butler-root"
+      style={{ '--wc-selection': accentColor } as CSSProperties}
+    >
       <div className={dark ? 'wc-dark webbutler:h-full' : 'webbutler:h-full'}>
         {state?.kind === 'task' ? (
           <TaskActivityView
@@ -96,10 +112,16 @@ function App() {
             onHighlightLink={focusHighlight}
           />
         ) : (
-          <div className="webbutler:flex webbutler:h-full webbutler:items-center webbutler:justify-center webbutler:px-6 webbutler:text-center webbutler:text-[12px] webbutler:text-[var(--wc-text-3)]">
-            No report yet. Ask for something long-form, like extracting a
-            table or drafting an email.
-          </div>
+          // Empty: explain what lands here, and offer example prompts that
+          // prefill the shell in the active tab (same plumbing suggestions
+          // use).
+          <PanelEmptyState
+            onTryPrompt={(text) =>
+              void browser.runtime
+                .sendMessage({ type: MESSAGE.SHELL_PREFILL, text })
+                .catch(() => {})
+            }
+          />
         )}
       </div>
     </div>

@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { IconType } from "react-icons";
 import { HiMagnifyingGlass, HiXMark } from "react-icons/hi2";
+import { escapeClaims } from "../../../lib/settings";
 
 /**
  * The shared chrome of every menu page. All five views (Tasks, Artifacts,
@@ -174,6 +175,27 @@ export function HeaderSearch({
   onChange: (value: string) => void;
   placeholder?: string;
 }) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const latest = useRef({ value, onChange });
+  latest.current = { value, onChange };
+
+  // In the extension, Esc never reaches this input's own onKeyDown — the
+  // shell absorbs it at window capture before the page (or React) sees it.
+  // A claim gives search-clearing its priority back: focused with text,
+  // Esc empties the field instead of closing the menu.
+  useEffect(() => {
+    const claim = () => {
+      const el = inputRef.current;
+      if (!el || !latest.current.value || !el.matches(":focus")) return false;
+      latest.current.onChange("");
+      return true;
+    };
+    escapeClaims.add(claim);
+    return () => {
+      escapeClaims.delete(claim);
+    };
+  }, []);
+
   return (
     <span
       className={`webbutler:flex webbutler:items-center webbutler:gap-1 webbutler:rounded-full webbutler:border webbutler:border-transparent webbutler:py-0.5 webbutler:pr-1 webbutler:pl-1.5 webbutler:transition-all webbutler:duration-150 webbutler:focus-within:border-[var(--wc-border-hairline)] webbutler:focus-within:bg-[var(--wc-hover-1)] ${
@@ -186,12 +208,13 @@ export function HeaderSearch({
         className="webbutler:shrink-0 webbutler:text-[var(--wc-text-4)]"
       />
       <input
+        ref={inputRef}
         type="text"
         value={value}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
-          // The shell's global hotkeys (Esc collapses) must not fire while
-          // the user is just clearing the search.
+          // Fallback for hosts without the window-capture Esc owner
+          // (Storybook); in the extension the claim above handles this.
           if (event.key === "Escape" && value) {
             event.stopPropagation();
             onChange("");

@@ -1,7 +1,5 @@
-import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { getFreestyle } from './freestyle';
-import { WORKSPACE_DIR } from './acp';
+import { WORKSPACE_DIR } from './vm-paths';
 
 /**
  * The Web Butler contract between us and the agent CLIs.
@@ -12,12 +10,13 @@ import { WORKSPACE_DIR } from './acp';
  *  - buildTurnMessage: the envelope around every user message: the page
  *    they're on (URL, title, HTML snapshot), any elements they selected,
  *    and the outcome-file path for this turn.
- *  - readOutcomes: after the turn ends, the outcome file is read off the
- *    VM and validated. The agent declares what it produced there: a short
- *    markdown response or a long-form artifact (extensions and actions
- *    will join this union later). A missing or malformed file falls back
- *    to the streamed reply text as a plain response, flagged (fileMissing
- *    or invalid) so the prompt route can push back rather than present
+ *  - parseOutcomesRaw: after the turn ends, the VM daemon reads the
+ *    outcome file locally and sends its raw content up; this validates
+ *    it. The agent declares what it produced there: a short markdown
+ *    response or a long-form artifact (extensions and actions will join
+ *    this union later). A missing or malformed file falls back to the
+ *    streamed reply text as a plain response, flagged (fileMissing or
+ *    invalid) so the settle negotiation can push back rather than present
  *    undeclared work as done.
  */
 
@@ -192,71 +191,23 @@ export function extensionProblem(outcome: ExtensionOutcome): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Turn context files: the user's stored work, readable on the VM.
+// Turn context files: the user's stored work, readable on the VM. The VM
+// daemon mirrors them (it gets a manifest with each turn and fetches what
+// it's missing from /api/daemon/context); the server's job is just to
+// format a report's markdown body the same way everywhere.
 // ---------------------------------------------------------------------------
 
-/** What each context file already holds, per VM, so a turn only writes
-    what changed: extensions are versioned, reports immutable by id. Lives
-    in server memory — a restart just rewrites once. */
-const syncedContext = new Map<string, Map<string, number>>();
-
-/**
- * Mirror the user's extensions (current scripts) and past reports onto the
- * VM before a turn, so the agent can read what it is asked to build on.
- * Best-effort: a failed write costs the agent a readable file, never the
- * turn — the envelope still lists everything.
- */
-export async function syncTurnContext(
-  vmId: string,
-  extensions: Array<{ id: string; version: number; script: string }>,
-  reports: Array<{
-    id: string;
-    title: string;
-    description: string;
-    text: string;
-  }>,
-): Promise<void> {
-  try {
-    const vm = getFreestyle().vms.ref({ vmId });
-    let memo = syncedContext.get(vmId);
-    if (!memo) {
-      // First sync since server start: the dirs may predate this feature
-      // on an old VM, and fs writes don't create parents. Only remember
-      // the VM once the mkdir lands, so a transient failure retries.
-      await vm.exec({
-        command: `mkdir -p ${CONTEXT_DIR}/extensions ${CONTEXT_DIR}/reports`,
-        timeoutMs: 15_000,
-      });
-      memo = new Map();
-      syncedContext.set(vmId, memo);
-    }
-    const writes: Array<Promise<unknown>> = [];
-    for (const ext of extensions) {
-      const key = `ext:${ext.id}`;
-      if (memo.get(key) === ext.version) continue;
-      writes.push(
-        vm.fs
-          .writeTextFile(extensionSourcePath(ext.id), ext.script)
-          .then(() => memo.set(key, ext.version)),
-      );
-    }
-    for (const report of reports) {
-      const key = `report:${report.id}`;
-      if (memo.has(key)) continue;
-      const body =
-        `# ${report.title}\n\n` +
-        (report.description ? `${report.description}\n\n` : '') +
-        report.text;
-      writes.push(
-        vm.fs
-          .writeTextFile(reportSourcePath(report.id), body)
-          .then(() => memo.set(key, 1)),
-      );
-    }
-    await Promise.allSettled(writes);
-  } catch (error) {
-    console.warn(`[butler] context sync failed on ${vmId}:`, error);
-  }
+/** The markdown body a report is mirrored to the VM as. */
+export function reportFileBody(report: {
+  title: string;
+  description: string;
+  text: string;
+}): string {
+  return (
+    `# ${report.title}\n\n` +
+    (report.description ? `${report.description}\n\n` : '') +
+    report.text
+  );
 }
 
 /** Follow-up prompts the agent may offer alongside its outcomes. Junk
@@ -279,6 +230,8 @@ const suggestionsSchema = z.unknown().transform((value): string[] => {
 export type PageHighlight = {
   id: string;
   selector: string;
+  /** 1-3 word name for the marker's on-page pill ("Auto-renewal"). */
+  label?: string;
   note?: string;
 };
 
@@ -308,7 +261,18 @@ const highlightsSchema = z.unknown().transform((value): PageHighlight[] => {
       typeof record.note === 'string'
         ? record.note.trim().slice(0, 500)
         : undefined;
-    highlights.push({ id, selector, note: note || undefined });
+    // The pill is small; a "label" that's really a sentence gets cut hard
+    // rather than dropped (the UI truncates with an ellipsis anyway).
+    const label =
+      typeof record.label === 'string'
+        ? record.label.trim().replace(/\s+/g, ' ').slice(0, 40)
+        : undefined;
+    highlights.push({
+      id,
+      selector,
+      label: label || undefined,
+      note: note || undefined,
+    });
   }
   return highlights;
 });
@@ -420,9 +384,9 @@ This field is where every "Want me to…?" goes. Whenever you are tempted to clo
 
 "highlights" is optional: up to eight sections of the CURRENT page to point the user at, next to "outcomes":
 
-{ "outcomes": [...], "highlights": [ { "id": "pricing-row", "selector": "#plans tr:nth-child(3)", "note": "..." } ] }
+{ "outcomes": [...], "highlights": [ { "id": "pricing-row", "selector": "#plans tr:nth-child(3)", "label": "Team pricing", "note": "..." } ] }
 
-"selector" is a CSS selector that must resolve on the page this message came from — build it from the HTML snapshot, preferring ids and stable class names over long positional chains. "note" is one or two short sentences of markdown: what this section is and why you flagged it. Each highlight renders as a quiet marker over that part of the page; nothing scrolls or flashes on its own.
+"selector" is a CSS selector that must resolve on the page this message came from — build it from the HTML snapshot, preferring ids and stable class names over long positional chains. "label" is REQUIRED in practice: a 1-3 word name for the section, worn by the marker's on-page pill ("Auto-renewal", "Price per minute", "Hidden fee") — name WHAT it is, never generic filler like "Note" or "Section 1". "note" is one or two short sentences of markdown: what this section is and why you flagged it. Each highlight renders as a quiet marker over that part of the page; nothing scrolls or flashes on its own.
 
 To send the user to one, link it from your response or artifact markdown: [the third pricing row](highlight:pricing-row). Clicking that link scrolls the page to the section and opens its note. Always pair highlights with links — a highlight nothing points to is just noise.
 
@@ -462,7 +426,7 @@ Your workspace directory persists between conversations. Keep durable observatio
 
 /** A fresh outcome-file path for one turn. */
 export function newOutcomePath(): string {
-  return `${OUTCOME_DIR}/outcome-${randomUUID()}.json`;
+  return `${OUTCOME_DIR}/outcome-${crypto.randomUUID()}.json`;
 }
 
 /** "3m ago", "2h ago", "5d ago" — envelope-friendly relative time. */
@@ -719,61 +683,47 @@ export type OutcomeRead = {
 };
 
 /**
- * Collect the turn's outcomes from the VM (consuming the file). An agent
- * that didn't write the file degrades to its streamed reply as a short
- * response. One that wrote an INVALID file additionally reports why, so
- * the prompt route can ask it to correct the file rather than silently
- * presenting the streamed reply as if the declared work landed.
+ * Parse the turn's outcome-file content, which the VM daemon read locally
+ * and sent up with its settle. An agent that didn't write the file (raw is
+ * null) degrades to its streamed reply as a short response. One that wrote
+ * an INVALID file additionally reports why, so the settle negotiation can
+ * ask it to correct the file rather than silently presenting the streamed
+ * reply as if the declared work landed.
  */
-export async function readOutcomes(
-  vmId: string,
-  outcomePath: string,
+export function parseOutcomesRaw(
+  raw: string | null | undefined,
   fallbackText: string,
-): Promise<OutcomeRead> {
+): OutcomeRead {
   let invalid: string | undefined;
   let fileMissing = false;
-  try {
-    const vm = getFreestyle().vms.ref({ vmId });
-    const result = await vm.exec({
-      command: `cat ${outcomePath} && rm -f ${outcomePath}`,
-      timeoutMs: 15_000,
-    });
-    // Non-zero status: no file. The agent answered in plain text only.
-    if (result.statusCode === 0) {
-      const raw = result.stdout ?? '';
-      try {
-        const parsed = outcomesFileSchema.safeParse(
-          normalizeOutcomesFile(JSON.parse(raw)),
-        );
-        if (parsed.success) {
-          return {
-            outcomes: parsed.data.outcomes,
-            suggestions: parsed.data.suggestions?.length
-              ? parsed.data.suggestions
-              : undefined,
-            highlights: parsed.data.highlights?.length
-              ? parsed.data.highlights
-              : undefined,
-          };
-        }
-        invalid = parsed.error.issues
-          .slice(0, 3)
-          .map((issue) => `${issue.path.join('.') || 'file'}: ${issue.message}`)
-          .join('; ');
-      } catch {
-        invalid = 'the file is not valid JSON';
-      }
-      console.warn(
-        `[butler] outcome file rejected on ${vmId} (${invalid}): ${raw.slice(0, 400)}`,
+  if (raw != null && raw.trim() !== '') {
+    try {
+      const parsed = outcomesFileSchema.safeParse(
+        normalizeOutcomesFile(JSON.parse(raw)),
       );
-    } else {
-      fileMissing = true;
+      if (parsed.success) {
+        return {
+          outcomes: parsed.data.outcomes,
+          suggestions: parsed.data.suggestions?.length
+            ? parsed.data.suggestions
+            : undefined,
+          highlights: parsed.data.highlights?.length
+            ? parsed.data.highlights
+            : undefined,
+        };
+      }
+      invalid = parsed.error.issues
+        .slice(0, 3)
+        .map((issue) => `${issue.path.join('.') || 'file'}: ${issue.message}`)
+        .join('; ');
+    } catch {
+      invalid = 'the file is not valid JSON';
     }
-  } catch (error) {
-    // A failed read (VM hiccup, timeout) is NOT the agent's fault, so it
-    // sets neither flag: pushing back on the agent for it would be unfair
-    // and useless.
-    console.warn(`[butler] outcome read failed on ${vmId}:`, error);
+    console.warn(
+      `[butler] outcome file rejected (${invalid}): ${raw.slice(0, 400)}`,
+    );
+  } else {
+    fileMissing = true;
   }
   const text = fallbackText.trim();
   return {

@@ -255,8 +255,8 @@
       </ol>
     </section>
 
-    <!-- Two ways in: the store listing that's coming, and the repo that
-         already works for anyone willing to bring their own keys. -->
+    <!-- Three ways in: the store listing that's coming, and two self-install
+         paths that work today: by hand, or handed to a coding agent. -->
     <section class="install" id="install" aria-label="Install">
       <h2 class="sec-title">Install</h2>
       <div class="install-cols">
@@ -275,25 +275,52 @@
           </button>
         </div>
         <div class="install-col">
-          <h3>Run it yourself, today</h3>
+          <h3>By your AI agent</h3>
           <p>
-            Open source front to back: the extension loads unpacked, and the
-            server runs on your own keys.
+            Give Claude Code, Codex, or Cursor one prompt. The agent builds
+            the extension and installs it over Chrome's DevTools protocol;
+            you sign in when it's done.
           </p>
-          <pre class="install-clone"><code>git clone https://github.com/theswerd/web-butler</code></pre>
           <p class="install-note">
-            The README walks through the rest: the server, a database, a
-            sandbox key, and the load-unpacked step.
+            The prompt points at
+            <a href="/install.md">butler.swerdlow.dev/install.md</a>, a
+            machine-followable install guide.
           </p>
           <div class="install-actions">
-            <a class="btn-ghost" href="https://github.com/theswerd/web-butler#readme">Read the setup guide</a>
-            <button class="btn-copy" type="button" id="copy-ai-install">
+            <button class="btn-ghost btn-ghost-button" type="button" id="copy-agent-prompt">
               <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <rect x="5.25" y="5.25" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.5" />
                 <path d="M10.75 5.25V3.5A1.5 1.5 0 0 0 9.25 2h-5.5A1.75 1.75 0 0 0 2 3.75v5.5a1.5 1.5 0 0 0 1.5 1.5h1.75" stroke="currentColor" stroke-width="1.5" />
               </svg>
-              <span>Copy instructions for AI</span>
+              <span>Copy prompt for your agent</span>
             </button>
+          </div>
+          <!-- Deep links from ailinks.swerdlow.dev: the same prompt,
+               pre-filled in the agent. Hrefs are set by script below. -->
+          <div class="agent-links">
+            <span class="agent-links-label">or open it in</span>
+            <a class="agent-chip" id="agent-link-cursor" href="https://cursor.com/link/prompt">Cursor</a>
+            <a class="agent-chip" id="agent-link-claude" href="claude-cli://open">Claude Code</a>
+            <a class="agent-chip" id="agent-link-codex" href="codex://new">Codex</a>
+          </div>
+        </div>
+        <div class="install-col">
+          <h3>Build it yourself</h3>
+          <p>
+            The DIY route, for the curious. Open source front to back:
+            clone, build, load unpacked. The hosted server does the rest,
+            no keys needed.
+          </p>
+          <pre class="install-clone"><code>git clone https://github.com/theswerd/web-butler</code></pre>
+          <p class="install-note">
+            Build with <code>npm run build:prod</code>, load the output at
+            <code>chrome://extensions</code>, flip on Allow&nbsp;User&nbsp;Scripts.
+          </p>
+          <div class="install-actions">
+            <a class="btn-ghost" href="/install.md">Read install.md</a>
+            <a class="btn-copy" href="https://github.com/theswerd/web-butler#readme">
+              <span>Full setup guide</span>
+            </a>
           </div>
         </div>
       </div>
@@ -337,21 +364,37 @@
     <span class="foot-sep">·</span>
     <span>by</span>
     <a href="https://x.com/benswerd">@benswerd</a>
+    <span class="foot-sep">·</span>
+    <a href="/privacy">Privacy</a>
   </footer>
 
   <script>
-    // Copy a complete handoff for a coding agent, not just the clone command.
+    // Copy a handoff prompt for a coding agent. The heavy lifting lives at
+    // /install.md so the prompt stays short and the steps stay updatable.
     (() => {
-      const button = document.getElementById('copy-ai-install');
+      const button = document.getElementById('copy-agent-prompt');
       if (!button) return;
       const label = button.querySelector('span');
-      const instructions = `Set up Web Butler locally from https://github.com/theswerd/web-butler.
+      const idle = label.textContent;
+      const instructions = `Install the Web Butler Chrome extension on this machine.
 
-First clone the repository and read its README completely. Follow the documented setup rather than guessing. The project requires Node 20+, npm, a Neon Postgres database, a Freestyle API key, and Chrome.
+Fetch https://butler.swerdlow.dev/install.md and follow it exactly; do not invent flags or steps. Use the hosted server (the production build), so no API keys are needed.
 
-Install dependencies, copy apps/server/.env.example to apps/server/.env, and tell me which required secret values I need to provide. Never invent credentials or commit the .env file. Once configuration is available, run the database migrations and start the server. Then run the normal-Chrome development build with npm run dev:chrome.
+Do the whole install yourself with the programmatic CDP route in that guide. You have my permission to quit and relaunch Chrome (it restores my tabs), so do not ask me to choose an option or confirm the restart. Enable the Allow User Scripts toggle yourself too. Only if a step fails, tell me the exact remaining clicks. Finish by telling me how to verify it works, and leave the provider sign-in to me.`;
 
-Build and type-check the project, fix setup errors that are caused by the repository, and stop for any missing credentials or account actions that only I can complete. When ready, tell me how to load the chrome-dev directory as an unpacked extension, enable Allow User Scripts, and verify Web Butler on a normal webpage.`;
+      // The same prompt, pre-filled through each agent's deep link
+      // (formats from ailinks.swerdlow.dev).
+      const encoded = encodeURIComponent(instructions);
+      const links = {
+        'agent-link-cursor': `https://cursor.com/link/prompt?text=${encoded}`,
+        'agent-link-claude': `claude-cli://open?repo=theswerd/web-butler&q=${encoded}`,
+        'agent-link-codex': `codex://new?prompt=${encoded}`,
+      };
+      for (const [id, href] of Object.entries(links)) {
+        const link = document.getElementById(id);
+        if (link) link.href = href;
+      }
+
       let reset;
       button.addEventListener('click', async () => {
         try {
@@ -374,16 +417,16 @@ Build and type-check the project, fix setup errors that are caused by the reposi
             label.textContent = 'Copy failed';
             clearTimeout(reset);
             reset = setTimeout(() => {
-              label.textContent = 'Copy instructions for AI';
+              label.textContent = idle;
             }, 1800);
             return;
           }
         }
-        label.textContent = 'Copied for AI';
+        label.textContent = 'Copied. Paste it to your agent';
         button.classList.add('copied');
         clearTimeout(reset);
         reset = setTimeout(() => {
-          label.textContent = 'Copy instructions for AI';
+          label.textContent = idle;
           button.classList.remove('copied');
         }, 1800);
       });

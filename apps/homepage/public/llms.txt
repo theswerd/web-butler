@@ -7,6 +7,7 @@ Web Butler adds a compact prompt to every page. It can answer questions using pa
 ## Primary links
 
 - [Homepage](https://butler.swerdlow.dev/): Product overview, interactive examples, installation paths, and FAQ.
+- [Agent install guide](https://butler.swerdlow.dev/install.md): Machine-followable instructions for installing the extension, including the programmatic CDP route for coding agents.
 - [Source and setup guide](https://github.com/theswerd/web-butler#readme): Monorepo source, prerequisites, local server setup, and unpacked-extension instructions.
 - [Full AI reference](https://butler.swerdlow.dev/llms-full.txt): Detailed product, architecture, installation, and usage information.
 

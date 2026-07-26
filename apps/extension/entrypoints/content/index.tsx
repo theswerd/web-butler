@@ -1,5 +1,6 @@
 import ReactDOM from 'react-dom/client';
 import { App } from '../../components/App';
+import { escapeSink } from '../../lib/escape-sink';
 // Inlined so mounting never waits on a CSS network fetch (cssInjectionMode
 // 'ui' fetches the stylesheet before mount, delaying the panel past first
 // paint on every navigation).
@@ -13,6 +14,49 @@ export default defineContentScript({
   runAt: 'document_start',
 
   async main(ctx) {
+    // Esc belongs to the shell while it's open. Registered at
+    // document_start — before any page script — so this capture listener
+    // is first in line on window and stopImmediatePropagation silences
+    // every page listener (capture AND bubble), while preventDefault stops
+    // browser defaults (exiting fullscreen, closing <dialog>s). The App
+    // plugs the actual close flow into the sink when it mounts; until
+    // then, when the shell is collapsed, or when this script is a zombie
+    // from a previous build, the sink declines and Esc flows to the page
+    // untouched.
+    let swallowKeyup = false;
+    window.addEventListener(
+      'keydown',
+      (event) => {
+        if (
+          event.key !== 'Escape' ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.altKey ||
+          event.shiftKey
+        ) {
+          return;
+        }
+        if (escapeSink.host?.isConnected !== true) return;
+        if (escapeSink.onEscape?.() !== true) return;
+        // The matching keyup is ours too — sites that act on Esc keyup
+        // must not see half the press.
+        swallowKeyup = true;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      true,
+    );
+    window.addEventListener(
+      'keyup',
+      (event) => {
+        if (event.key !== 'Escape' || !swallowKeyup) return;
+        swallowKeyup = false;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      true,
+    );
+
     // A previous build's host may still be on the page: extension reloads
     // orphan manifest-injected scripts, and the background re-executes this
     // file into open tabs (remountContentScripts). The zombie shell still
@@ -35,6 +79,8 @@ export default defineContentScript({
       anchor: 'html',
       append: 'last',
       onMount(container, shadow, shadowHost) {
+        // This build's host is now THE shell — see escapeSink.host docs.
+        escapeSink.host = shadowHost;
         // Full-viewport modal shell must not eat page clicks.
         shadowHost.style.pointerEvents = 'none';
         const shell = shadow.querySelector('html');

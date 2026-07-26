@@ -1,0 +1,49 @@
+{
+  "scale": 2,
+  "view": {
+    "width": 1720,
+    "height": 1280
+  },
+  "scenes": {
+    "ask": {
+      "clickAtMs": 1020,
+      "bg": "rgb(255, 255, 255)",
+      "box": {
+        "x": 100,
+        "y": 56,
+        "width": 660,
+        "height": 386.59375
+      }
+    },
+    "edit": {
+      "clickAtMs": 994,
+      "bg": "rgb(255, 255, 255)",
+      "box": {
+        "x": 100,
+        "y": 56,
+        "width": 660,
+        "height": 386.59375
+      }
+    },
+    "form": {
+      "clickAtMs": 1013,
+      "bg": "rgb(255, 255, 255)",
+      "box": {
+        "x": 100,
+        "y": 56,
+        "width": 660,
+        "height": 386.59375
+      }
+    },
+    "report": {
+      "clickAtMs": 1119,
+      "bg": "rgb(255, 255, 255)",
+      "box": {
+        "x": 100,
+        "y": 56,
+        "width": 660,
+        "height": 386.59375
+      }
+    }
+  }
+}

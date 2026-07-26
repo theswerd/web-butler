@@ -9,6 +9,14 @@
 // changes, so the extension refreshes itself. Refresh the page to remount
 // the content script after a reload.
 //
+// Builds point at the DEPLOYED API by default: agent turns need the
+// sandbox daemon to call the server back over the public internet, which
+// localhost can't receive — against a plain local server every job stalls
+// into "the sandbox did not pick this task up". To develop server code,
+// run a tunnel (cloudflared) pointing at localhost:8787, set WB_PUBLIC_URL
+// to the tunnel URL in apps/server/.env, and start this loop with
+// WXT_SERVER_URL=http://localhost:8787.
+//
 //   npm run dev:chrome
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -44,6 +52,11 @@ function build() {
   const child = spawn('npm', ['run', 'build', '-w', '@web-butler/extension'], {
     cwd: root,
     stdio: ['ignore', 'ignore', 'inherit'],
+    env: {
+      ...process.env,
+      WXT_SERVER_URL:
+        process.env.WXT_SERVER_URL ?? 'https://butler.swerdlow.dev',
+    },
   });
   child.on('exit', (code) => {
     building = false;

@@ -21,6 +21,9 @@ function Frame({ children }: { children: React.ReactNode }) {
         border: '1px solid rgba(0,0,0,0.08)',
         borderRadius: 8,
         overflow: 'hidden',
+        // The side panel sets this from the user's accent setting; the
+        // highlight chips and status badge read it.
+        ['--wc-selection' as string]: '#3b82f6',
       }}
     >
       {children}
@@ -130,6 +133,78 @@ export const WithExtensionOutput: Story = {
         }}
         updates={FEED.slice(0, 3)}
         onOpenExtension={() => console.log('[storybook] open extension')}
+      />
+    </Frame>
+  ),
+};
+
+/** The structured feed: browser-control acts as icon rows while running,
+    then the results landing as cards and chips — the answer, the report,
+    the extension, and the page highlights the agent placed. */
+export const RichActivity: Story = {
+  render: () => (
+    <Frame>
+      <TaskActivityView
+        task={{
+          ...RUNNING,
+          prompt: 'Review this pricing page and flag anything sneaky',
+          url: 'https://acme.example/pricing',
+          status: 'done',
+          finishedAt: Date.now() - 5_000,
+          outcome: 'Pricing review',
+          reportId: 'report-1',
+          suggestions: ['Compare against Initech\u2019s pricing'],
+        }}
+        updates={[
+          {
+            at: Date.now() - 90_000,
+            kind: 'thought',
+            text: 'I\u2019ll walk the page like a person would: open the pricing table, poke the toggles, and watch what the network says.',
+          },
+          { at: Date.now() - 84_000, kind: 'browser', verb: 'snapshot', text: 'Mapping this page' },
+          { at: Date.now() - 80_000, kind: 'browser', verb: 'click', text: 'Clicking "Billed annually"' },
+          { at: Date.now() - 76_000, kind: 'browser', verb: 'scroll', text: 'Scrolled the page' },
+          { at: Date.now() - 72_000, kind: 'browser', verb: 'screenshot', text: 'Took a screenshot' },
+          { at: Date.now() - 66_000, kind: 'browser', verb: 'network', text: 'Reviewing network traffic' },
+          {
+            at: Date.now() - 40_000,
+            kind: 'thought',
+            text: 'The monthly toggle silently re-prices the middle tier. That\u2019s the headline finding.',
+          },
+          { at: Date.now() - 30_000, kind: 'browser', verb: 'type', text: 'Typing into "Promo code"' },
+          { at: Date.now() - 26_000, kind: 'browser', verb: 'key', text: 'Pressing Enter' },
+          {
+            at: Date.now() - 8_000,
+            kind: 'answer',
+            text: 'Two things worth your attention: the **annual toggle** quietly swaps the Pro tier\u2019s price base, and the promo field accepts expired codes without an error.',
+          },
+          {
+            at: Date.now() - 7_000,
+            kind: 'report',
+            text: 'Pricing review: what the toggles hide',
+            detail: 'Tier-by-tier notes with the network calls behind each price swap.',
+          },
+          {
+            at: Date.now() - 6_000,
+            kind: 'extension',
+            text: 'Show true annual prices',
+            detail: 'Pins the effective per-month price next to every tier.',
+          },
+          {
+            at: Date.now() - 5_000,
+            kind: 'highlights',
+            text: 'Marked 3 places on the page',
+            marks: [
+              { id: 'h1', label: 'Pro tier price' },
+              { id: 'h2', label: 'Annual toggle' },
+              { id: 'h3', label: 'Promo field' },
+            ],
+          },
+        ]}
+        onOpenReport={() => console.log('[storybook] open report')}
+        onOpenExtension={() => console.log('[storybook] open extension')}
+        onUseSuggestion={(text) => console.log('[storybook] suggest:', text)}
+        onHighlightLink={(id) => console.log('[storybook] highlight:', id)}
       />
     </Frame>
   ),
